@@ -1,0 +1,44 @@
+{
+  "name": "opencode-ember",
+  "version": "0.1.0",
+  "description": "Keep an LLM prompt cache warm across breaks, guard cold rewrites before you pay for them, and score what a break actually cost. An opencode plugin.",
+  "type": "module",
+  "main": "ember.ts",
+  "exports": {
+    ".": "./ember.ts"
+  },
+  "files": [
+    "ember.ts",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "typecheck": "tsc --noEmit"
+  },
+  "keywords": [
+    "opencode",
+    "opencode-plugin",
+    "prompt-cache",
+    "prompt-caching",
+    "cache",
+    "anthropic",
+    "llm",
+    "cost",
+    "tokens"
+  ],
+  "author": "Ozan Dogrultan",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ozandogrultan/opencode-ember.git"
+  },
+  "bugs": {
+    "url": "https://github.com/ozandogrultan/opencode-ember/issues"
+  },
+  "homepage": "https://github.com/ozandogrultan/opencode-ember#readme",
+  "devDependencies": {
+    "@opencode-ai/plugin": "^1.18.0",
+    "@types/node": "^24.0.0",
+    "typescript": "^5.8.0"
+  }
+}
