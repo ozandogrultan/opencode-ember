@@ -8,10 +8,11 @@ import { dirname, join } from "node:path"
 // A port of karanb192/claude-code-mods `cache-tax` (the "Mod" form) to
 // opencode's plugin API. It does three things:
 //
-//   1. Keep the prompt cache warm. `/keepwarm` arms a window; after the cache
-//      TTL has almost lapsed the plugin sends one request over a *fork* of the
-//      session, which refreshes the same prefix without appending a single
-//      message to the real conversation.
+//   1. Keep the prompt cache warm. Every session arms a six-hour window by
+//      default; after the cache TTL has almost lapsed the plugin sends one
+//      request over a *fork* of the session, which refreshes the same prefix
+//      without appending a single message to the real conversation.
+//      `/keepwarm off` stops it for the session and turns the default off.
 //   2. Stop you on a cold send. When the TTL has lapsed and the context is
 //      large, `/ember guard refuse` hard blocks the prompt and displays an
 //      informative message in the turn before any provider tokens are spent.
@@ -45,7 +46,9 @@ import { dirname, join } from "node:path"
 //   EMBER_MIN_PING_SECONDS   ping floor (default 60)
 const DEFAULT_TTL_MS = envSeconds("EMBER_TTL_SECONDS") ?? 5 * 60 * 1000
 const DEFAULT_WINDOW_MS = 6 * 60 * 60 * 1000
-const AUTO_WARM_MS = 3 * 60 * 60 * 1000
+// Windows armed without an explicit duration — at session start, and after a
+// cold write — are the same six hours as the default window.
+const AUTO_WARM_MS = DEFAULT_WINDOW_MS
 const BIG_TOKENS = envNumber("EMBER_MIN_CONTEXT") ?? 50_000
 const MIN_PING_MS = (envNumber("EMBER_MIN_PING_SECONDS") ?? 60) * 1000
 const PING_PROMPT = "Reply with the single word: warm"
@@ -150,11 +153,11 @@ function readStore(): Store {
     const parsed = JSON.parse(readFileSync(file, "utf8"))
     return {
       guard: parsed.guard === "refuse" || parsed.guard === "block" ? "refuse" : "warn",
-      always: parsed.always === true,
+      always: parsed.always !== false,
       sessions: parsed.sessions && typeof parsed.sessions === "object" ? parsed.sessions : {},
     }
   } catch {
-    return { guard: "warn", always: false, sessions: {} }
+    return { guard: "warn", always: true, sessions: {} }
   }
 }
 
@@ -465,9 +468,9 @@ export const EmberPlugin: Plugin = async ({ client }) => {
 
   const usage = (): string =>
     [
-      "/keepwarm                 keep warm for six hours",
+      "/keepwarm                 keep this session warm for six hours",
       "/keepwarm 90m             a window of your own (also 2h30m, 6h)",
-      "/keepwarm always          arm a window at every session start",
+      "/keepwarm always          arm at every session start (already the default)",
       "/keepwarm 6h every 2m     override the ping period (floor 1m)",
       "/keepwarm 6h ttl 1h       assume the 1-hour cache tier",
       "/keepwarm status          the status line",

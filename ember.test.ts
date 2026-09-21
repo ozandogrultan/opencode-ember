@@ -1,6 +1,6 @@
 import { describe, expect, it, beforeEach, afterEach } from "bun:test"
 import { EmberPlugin, parseDuration } from "./ember"
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs"
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import { join } from "node:path"
 import { tmpdir } from "node:os"
 
@@ -213,5 +213,36 @@ describe("opencode-ember", () => {
     expect(toasts[0].body.message).toContain("121,000 tokens.")
     expect(toasts[0].body.message).not.toContain("n/a")
     expect(toasts[0].body.message).toContain("Sending anyway")
+  })
+
+  const silentClient = {
+    tui: { showToast: async () => {} },
+    session: { messages: async () => ({ data: [] }) },
+  }
+
+  it("arms a six-hour window at session start by default", async () => {
+    const plugin = await EmberPlugin({ client: silentClient } as any)
+    const chatMessage = plugin["chat.message"]
+
+    await chatMessage!({ sessionID: "default-warm" }, { parts: [{ type: "text", text: "Hello" }] } as any)
+
+    const store = JSON.parse(readFileSync(stateFile, "utf8"))
+    const armed = store.sessions["default-warm"]
+    expect(armed).toBeDefined()
+    const hours = (armed.deadline - Date.now()) / (60 * 60 * 1000)
+    expect(hours).toBeGreaterThan(5.9)
+    expect(hours).toBeLessThanOrEqual(6)
+  })
+
+  it("stays off when the stored default was turned off", async () => {
+    writeFileSync(stateFile, JSON.stringify({ guard: "warn", always: false, sessions: {} }))
+
+    const plugin = await EmberPlugin({ client: silentClient } as any)
+    const chatMessage = plugin["chat.message"]
+
+    await chatMessage!({ sessionID: "opted-out" }, { parts: [{ type: "text", text: "Hello" }] } as any)
+
+    const store = JSON.parse(readFileSync(stateFile, "utf8"))
+    expect(store.sessions["opted-out"]).toBeUndefined()
   })
 })

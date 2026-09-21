@@ -13,11 +13,13 @@ dependencies.
 
 ## What it does
 
-- **`/keepwarm` keeps the cache warm.** After the cache tier has almost lapsed,
-  the plugin sends one request over a **fork** of the session. The fork shares
-  the session's model, agent, tools and system prompt, so its prefix is
-  byte-identical and only appends: the provider answers from cache and the TTL
-  refreshes. No heartbeat messages ever enter the real conversation.
+- **The cache stays warm by default.** Every session arms a **six-hour** window;
+  after the cache tier has almost lapsed, the plugin sends one request over a
+  **fork** of the session. The fork shares the session's model, agent, tools and
+  system prompt, so its prefix is byte-identical and only appends: the provider
+  answers from cache and the TTL refreshes. No heartbeat messages ever enter the
+  real conversation. `/keepwarm off` stops it for the session and turns the
+  default off.
 - **`/ember guard warn` (default) shows the price and sends anyway.** When the TTL has
   lapsed and the context is large, a graceful warning is shown while the message sends.
   `/ember guard refuse` hard blocks cold sends and shows an informative error in the turn,
@@ -72,19 +74,21 @@ in `opencode.json`, then restart opencode.
 
 | command | effect |
 | --- | --- |
-| `/keepwarm` | keep warm for six hours |
+| `/keepwarm` | arm six hours for this session |
 | `/keepwarm 90m` | a window of your own (`2h30m`, `6h`, …) |
-| `/keepwarm always` | arm a window at every session start, remembered across sessions |
+| `/keepwarm always` | arm a window at every session start (already the default) |
 | `/keepwarm 6h every 2m` | override the ping period (floor 1m) |
 | `/keepwarm 6h ttl 1h` | assume the 1-hour cache tier |
 | `/keepwarm status` | the status line |
-| `/keepwarm off` | stop, forget the window, turn `always` off |
+| `/keepwarm off` | stop, forget the window, turn the default off |
 | `/ember` | the card |
 | `/ember guard warn` | show the price and send (default) |
 | `/ember guard refuse` | hard block cold sends |
 
 A window belongs to the session that armed it. A second session starts with its
-own; resuming the same session gets its window back.
+own; resuming the same session gets its window back. Warming is on by default, so
+a session arms its six hours the first time you speak in it — run `/keepwarm off`
+if you would rather warm only on request.
 
 ## The 5-minute tier (read this)
 
@@ -96,6 +100,10 @@ actually holds an hour, run `/keepwarm 6h ttl 1h` (or set
 Economically that matters: on a 200k-token context a cache read is ~$0.05 and a
 cold write ~$4, so ~80 pings cost one cold write. Warm a one-hour break and you
 win; warm a whole working day on the 5-minute tier and you are near break-even.
+
+Six hours is the default window, so that is the arithmetic you opt into: an idle
+session keeps paying cache reads until the window lapses. Turn it off with
+`/keepwarm off` if you would rather decide per session.
 
 ## It will not invalidate your cache
 
