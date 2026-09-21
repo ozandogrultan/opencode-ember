@@ -18,10 +18,9 @@ dependencies.
   the session's model, agent, tools and system prompt, so its prefix is
   byte-identical and only appends: the provider answers from cache and the TTL
   refreshes. No heartbeat messages ever enter the real conversation.
-- **`/ember guard refuse` stops you once on a cold send.** When the TTL has
-  lapsed and the context is large, the next ordinary message is dropped with the
-  price on screen. Send it again and it goes through. `guard warn` shows the
-  price and sends anyway.
+- **`/ember guard warn` (default) shows the price and sends anyway.** When the TTL has
+  lapsed and the context is large, a graceful warning is shown while the message sends.
+  `/ember guard refuse` stops you once on a cold send until you send again.
 - **`/ember` keeps score.** Warm or cold, context size, cold-rewrite price, the
   break-even (how many pings cost one cold write, and the idle that covers),
   keepwarm state, guard mode, and this session's cold writes.
@@ -80,8 +79,8 @@ in `opencode.json`, then restart opencode.
 | `/keepwarm status` | the status line |
 | `/keepwarm off` | stop, forget the window, turn `always` off |
 | `/ember` | the card |
-| `/ember guard warn` | show the price and send (the original hook's default) |
-| `/ember guard refuse` | drop a cold send once (this port's default) |
+| `/ember guard warn` | show the price and send (default) |
+| `/ember guard refuse` | drop a cold send once |
 
 A window belongs to the session that armed it. A second session starts with its
 own; resuming the same session gets its window back.

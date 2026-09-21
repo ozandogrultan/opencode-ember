@@ -51,7 +51,9 @@ const BIG_TOKENS = envNumber("EMBER_MIN_CONTEXT") ?? 50_000
 const MIN_PING_MS = (envNumber("EMBER_MIN_PING_SECONDS") ?? 60) * 1000
 const RESEND_MS = 2 * 60 * 1000
 const PING_PROMPT = "Reply with the single word: warm"
-const STATE_FILE = join(homedir(), ".local", "share", "opencode", "ember.json")
+function stateFilePath(): string {
+  return process.env.EMBER_STATE_FILE ?? join(homedir(), ".local", "share", "opencode", "ember.json")
+}
 
 // $ per million tokens: [family, cache read, cache write, output]. Longest
 // family name first; a model id matches the first row it contains. Writes use
@@ -151,23 +153,25 @@ function everyFor(ttl: number): number {
 
 function readStore(): Store {
   try {
-    const parsed = JSON.parse(readFileSync(STATE_FILE, "utf8"))
+    const file = stateFilePath()
+    const parsed = JSON.parse(readFileSync(file, "utf8"))
     return {
-      guard: parsed.guard === "warn" ? "warn" : "refuse",
+      guard: parsed.guard === "refuse" ? "refuse" : "warn",
       always: parsed.always === true,
       sessions: parsed.sessions && typeof parsed.sessions === "object" ? parsed.sessions : {},
     }
   } catch {
-    return { guard: "refuse", always: false, sessions: {} }
+    return { guard: "warn", always: false, sessions: {} }
   }
 }
 
 function writeStore(store: Store): void {
   try {
-    mkdirSync(dirname(STATE_FILE), { recursive: true })
-    const tmp = STATE_FILE + ".tmp"
+    const file = stateFilePath()
+    mkdirSync(dirname(file), { recursive: true })
+    const tmp = file + ".tmp"
     writeFileSync(tmp, JSON.stringify(store, null, 2))
-    renameSync(tmp, STATE_FILE)
+    renameSync(tmp, file)
   } catch {
     // a failed write only costs us a restored window, never the conversation
   }
@@ -334,13 +338,14 @@ export const EmberPlugin: Plugin = async ({ client }) => {
 
   const guardText = (s: Session): string => {
     const price = priceOf(s.lastModel)
-    const rate = price ? `$${price[1]}/MTok` : "the cache-write rate"
+    const cold = coldUsd(s)
     const warm = warmUsd(s)
+    const cost = price
+      ? ` at $${price[1]}/MTok = ${fmtUsd(cold)}${warm == null ? "" : ` (a warm turn would have cost ${fmtUsd(warm)})`}`
+      : ""
     return (
       `the prompt cache went cold ${fmtDuration(Date.now() - s.lastRequestAt - s.ttl)} ago. ` +
-      `Sending this re-writes ${s.ctx.toLocaleString("en-US")} tokens at ${rate} = ${fmtUsd(coldUsd(s))}` +
-      (warm == null ? "" : ` (a warm turn would have cost ${fmtUsd(warm)})`) +
-      "."
+      `Sending this re-writes ${s.ctx.toLocaleString("en-US")} tokens${cost}.`
     )
   }
 
@@ -475,8 +480,8 @@ export const EmberPlugin: Plugin = async ({ client }) => {
       "/keepwarm status          the status line",
       "/keepwarm off             stop, forget the window, turn always off",
       "/ember                the card",
-      "/ember guard warn     show the price and send",
-      "/ember guard refuse   drop a cold send once (default)",
+      "/ember guard warn     show the price and send (default)",
+      "/ember guard refuse   drop a cold send once",
     ].join("\n")
 
   return {
@@ -532,7 +537,7 @@ export const EmberPlugin: Plugin = async ({ client }) => {
       if (resend || store.guard === "warn") {
         s.pendingColdWrite = true
         s.refusedHash = null
-        if (store.guard === "warn") await toast(guardText(s) + " Sending anyway (guard warn).", "warning")
+        if (store.guard === "warn") await toast(guardText(s) + " Sending anyway.", "warning")
         return
       }
 
@@ -570,12 +575,14 @@ export const EmberPlugin: Plugin = async ({ client }) => {
             s.compacted = false
             s.lastRequestAt = Date.now()
             s.ctx = part.tokens.input + part.tokens.cache.read + part.tokens.cache.write
-            if (s.pendingColdWrite && part.tokens.cache.write > 0) {
-              const price = priceOf(s.lastModel)
-              const usd = price ? (part.tokens.cache.write * price[1]) / 1e6 : null
-              s.misses.push({ at: Date.now(), tokens: part.tokens.cache.write, usd })
+            if (s.pendingColdWrite) {
+              if (part.tokens.cache.write > 0) {
+                const price = priceOf(s.lastModel)
+                const usd = price ? (part.tokens.cache.write * price[1]) / 1e6 : null
+                s.misses.push({ at: Date.now(), tokens: part.tokens.cache.write, usd })
+                if (!s.deadline) arm(s, AUTO_WARM_MS)
+              }
               s.pendingColdWrite = false
-              if (!s.deadline) arm(s, AUTO_WARM_MS)
             }
             break
           }
