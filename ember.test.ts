@@ -234,8 +234,21 @@ describe("opencode-ember", () => {
     expect(hours).toBeLessThanOrEqual(6)
   })
 
-  it("stays off when the stored default was turned off", async () => {
+  it("ignores a legacy store's always:false and warms anyway", async () => {
     writeFileSync(stateFile, JSON.stringify({ guard: "warn", always: false, sessions: {} }))
+
+    const plugin = await EmberPlugin({ client: silentClient } as any)
+    const chatMessage = plugin["chat.message"]
+
+    await chatMessage!({ sessionID: "legacy-store" }, { parts: [{ type: "text", text: "Hello" }] } as any)
+
+    const store = JSON.parse(readFileSync(stateFile, "utf8"))
+    expect(store.sessions["legacy-store"]).toBeDefined()
+    expect(store.version).toBe(2)
+  })
+
+  it("stays off when a stamped store was turned off", async () => {
+    writeFileSync(stateFile, JSON.stringify({ version: 2, guard: "warn", always: false, sessions: {} }))
 
     const plugin = await EmberPlugin({ client: silentClient } as any)
     const chatMessage = plugin["chat.message"]

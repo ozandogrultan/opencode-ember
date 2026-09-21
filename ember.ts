@@ -49,6 +49,10 @@ const DEFAULT_WINDOW_MS = 6 * 60 * 60 * 1000
 // Windows armed without an explicit duration — at session start, and after a
 // cold write — are the same six hours as the default window.
 const AUTO_WARM_MS = DEFAULT_WINDOW_MS
+// Stamped into the state file on every write. `always` defaulted to false
+// before v2, so an unstamped store's `false` is the old default rather than a
+// deliberate `/keepwarm off` and must not be honoured.
+const STORE_VERSION = 2
 const BIG_TOKENS = envNumber("EMBER_MIN_CONTEXT") ?? 50_000
 const MIN_PING_MS = (envNumber("EMBER_MIN_PING_SECONDS") ?? 60) * 1000
 const PING_PROMPT = "Reply with the single word: warm"
@@ -96,6 +100,7 @@ type Session = {
 }
 
 type Store = {
+  version: number
   guard: GuardMode
   always: boolean
   sessions: Record<string, { deadline: number; every: number; ttl?: number }>
@@ -151,13 +156,15 @@ function readStore(): Store {
   try {
     const file = stateFilePath()
     const parsed = JSON.parse(readFileSync(file, "utf8"))
+    const stamped = parsed.version === STORE_VERSION
     return {
+      version: STORE_VERSION,
       guard: parsed.guard === "refuse" || parsed.guard === "block" ? "refuse" : "warn",
-      always: parsed.always !== false,
+      always: stamped ? parsed.always !== false : true,
       sessions: parsed.sessions && typeof parsed.sessions === "object" ? parsed.sessions : {},
     }
   } catch {
-    return { guard: "warn", always: true, sessions: {} }
+    return { version: STORE_VERSION, guard: "warn", always: true, sessions: {} }
   }
 }
 

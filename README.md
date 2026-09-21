@@ -123,7 +123,10 @@ session keeps paying cache reads until the window lapses. Turn it off with
 | `EMBER_MIN_CONTEXT` | `50000` | cold-guard context floor, tokens |
 | `EMBER_MIN_PING_SECONDS` | `60` | ping floor |
 
-State lives in `~/.local/share/opencode/ember.json`. Delete it to reset.
+State lives in `~/.local/share/opencode/ember.json` and is stamped with a
+version. A state file written before warming was on by default is upgraded
+silently: its `always: false` was the old default rather than a choice, so it is
+ignored once and the new default applies. Delete the file to reset.
 
 ## Testing
 
