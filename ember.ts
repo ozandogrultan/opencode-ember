@@ -1,5 +1,4 @@
 import type { Plugin } from "@opencode-ai/plugin"
-import { createHash } from "node:crypto"
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs"
 import { homedir } from "node:os"
 import { dirname, join } from "node:path"
@@ -13,10 +12,10 @@ import { dirname, join } from "node:path"
 //      TTL has almost lapsed the plugin sends one request over a *fork* of the
 //      session, which refreshes the same prefix without appending a single
 //      message to the real conversation.
-//   2. Stop you once on a cold send. When the TTL has lapsed and the context is
-//      large, the next ordinary message is refused with the price on screen.
-//      Send it again and it goes through. `/ember guard warn` downgrades
-//      that to a price shown while the message sends.
+//   2. Stop you on a cold send. When the TTL has lapsed and the context is
+//      large, `/ember guard refuse` hard blocks the prompt and displays an
+//      informative message in the turn before any provider tokens are spent.
+//      `/ember guard warn` (default) shows the price and sends anyway.
 //   3. Keep score. `/ember` prints warm/cold, context, cold price, the
 //      break-even and this session's cold writes.
 //
@@ -49,7 +48,6 @@ const DEFAULT_WINDOW_MS = 6 * 60 * 60 * 1000
 const AUTO_WARM_MS = 3 * 60 * 60 * 1000
 const BIG_TOKENS = envNumber("EMBER_MIN_CONTEXT") ?? 50_000
 const MIN_PING_MS = (envNumber("EMBER_MIN_PING_SECONDS") ?? 60) * 1000
-const RESEND_MS = 2 * 60 * 1000
 const PING_PROMPT = "Reply with the single word: warm"
 function stateFilePath(): string {
   return process.env.EMBER_STATE_FILE ?? join(homedir(), ".local", "share", "opencode", "ember.json")
@@ -84,8 +82,7 @@ type Session = {
   compacted: boolean
   hydrating: boolean
   hydrated: boolean
-  refusedHash: string | null
-  refusedAt: number
+  blocked: string | null
   pendingColdWrite: boolean
   misses: Miss[]
   deadline: number
@@ -120,10 +117,6 @@ function priceOf(model: ModelRef | null): [number, number, number] | null {
   return null
 }
 
-function hash(text: string): string {
-  return createHash("sha1").update(text).digest("hex").slice(0, 16)
-}
-
 function fmtUsd(usd: number | null): string {
   return usd == null ? "n/a" : "$" + (usd >= 100 ? usd.toFixed(0) : usd.toFixed(2))
 }
@@ -156,7 +149,7 @@ function readStore(): Store {
     const file = stateFilePath()
     const parsed = JSON.parse(readFileSync(file, "utf8"))
     return {
-      guard: parsed.guard === "refuse" ? "refuse" : "warn",
+      guard: parsed.guard === "refuse" || parsed.guard === "block" ? "refuse" : "warn",
       always: parsed.always === true,
       sessions: parsed.sessions && typeof parsed.sessions === "object" ? parsed.sessions : {},
     }
@@ -196,8 +189,7 @@ export const EmberPlugin: Plugin = async ({ client }) => {
       compacted: false,
       hydrating: false,
       hydrated: false,
-      refusedHash: null,
-      refusedAt: 0,
+      blocked: null,
       pendingColdWrite: false,
       misses: [],
       deadline: persisted?.deadline ?? 0,
@@ -387,6 +379,7 @@ export const EmberPlugin: Plugin = async ({ client }) => {
       for (let i = list.length - 1; i >= 0; i--) {
         const info = list[i].info
         if (info.role !== "assistant") continue
+        if (info.error || !info.tokens || (info.tokens.input === 0 && info.tokens.cache.read === 0 && info.tokens.cache.write === 0)) continue
         s.lastModel = { providerID: info.providerID, modelID: info.modelID }
         s.ctx = info.tokens.input + info.tokens.cache.read + info.tokens.cache.write
         s.lastRequestAt = info.time.completed ?? info.time.created
@@ -479,9 +472,9 @@ export const EmberPlugin: Plugin = async ({ client }) => {
       "/keepwarm 6h ttl 1h       assume the 1-hour cache tier",
       "/keepwarm status          the status line",
       "/keepwarm off             stop, forget the window, turn always off",
-      "/ember                the card",
-      "/ember guard warn     show the price and send (default)",
-      "/ember guard refuse   drop a cold send once",
+      "/ember                    the card",
+      "/ember guard warn         show the price and send (default)",
+      "/ember guard refuse       hard block cold sends",
     ].join("\n")
 
   return {
@@ -502,8 +495,9 @@ export const EmberPlugin: Plugin = async ({ client }) => {
         const s = state(input.sessionID)
         const parts = (input.arguments ?? "").trim().split(/\s+/)
         if (parts[0]?.toLowerCase() === "guard") {
-          if (parts[1] === "warn" || parts[1] === "refuse") {
-            store.guard = parts[1]
+          const mode = parts[1]?.toLowerCase()
+          if (mode === "warn" || mode === "refuse" || mode === "block") {
+            store.guard = mode === "block" ? "refuse" : (mode as GuardMode)
             writeStore(store)
             message = `ember guard ${store.guard}`
           } else {
@@ -532,25 +526,26 @@ export const EmberPlugin: Plugin = async ({ client }) => {
       const cold = isCold(s) && s.ctx >= BIG_TOKENS
       if (!cold) return
 
-      const h = hash(text)
-      const resend = s.refusedHash === h && Date.now() - s.refusedAt < RESEND_MS
-      if (resend || store.guard === "warn") {
+      if (store.guard === "warn") {
         s.pendingColdWrite = true
-        s.refusedHash = null
-        if (store.guard === "warn") await toast(guardText(s) + " Sending anyway.", "warning")
+        await toast(guardText(s) + " Sending anyway.", "warning")
         return
       }
 
-      s.refusedHash = h
-      s.refusedAt = Date.now()
-      const tail = s.deadline
-        ? ` Send it again to pay it, and keepwarm will then hold the cache for ${fmtDuration(AUTO_WARM_MS)}.`
-        : " Send it again to pay it."
-      const message = `ember: ${guardText(s)}${tail} Or /clear and start from a note.`
-      // opencode masks a hook error as "Unexpected server error", so the toast
-      // is the real delivery; keep it up long enough to actually read.
+      const message =
+        `ember: ${guardText(s)} ` +
+        `Prompt blocked by ember guard refuse. Run /ember guard warn to allow cold writes, or /clear and start from a note.`
+      s.blocked = message
       await toast(message, "warning", 10 * 60_000)
-      throw new Error(message.replace(/\n/g, " "))
+    },
+
+    "chat.params": async (input) => {
+      const s = sessions.get(input.sessionID)
+      if (s?.blocked) {
+        const msg = s.blocked
+        s.blocked = null
+        throw new Error(msg)
+      }
     },
 
     event: async ({ event }) => {
@@ -609,6 +604,7 @@ export const EmberPlugin: Plugin = async ({ client }) => {
             s.lastRequestAt = 0
             s.compacted = false
             s.pendingColdWrite = false
+            s.blocked = null
             s.misses = []
             stop(s, null)
             break

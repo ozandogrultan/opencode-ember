@@ -20,7 +20,8 @@ dependencies.
   refreshes. No heartbeat messages ever enter the real conversation.
 - **`/ember guard warn` (default) shows the price and sends anyway.** When the TTL has
   lapsed and the context is large, a graceful warning is shown while the message sends.
-  `/ember guard refuse` stops you once on a cold send until you send again.
+  `/ember guard refuse` hard blocks cold sends and shows an informative error in the turn,
+  preventing accidental rewrites until you switch to `warn` or `/clear`.
 - **`/ember` keeps score.** Warm or cold, context size, cold-rewrite price, the
   break-even (how many pings cost one cold write, and the idle that covers),
   keepwarm state, guard mode, and this session's cold writes.
@@ -80,7 +81,7 @@ in `opencode.json`, then restart opencode.
 | `/keepwarm off` | stop, forget the window, turn `always` off |
 | `/ember` | the card |
 | `/ember guard warn` | show the price and send (default) |
-| `/ember guard refuse` | drop a cold send once |
+| `/ember guard refuse` | hard block cold sends |
 
 A window belongs to the session that armed it. A second session starts with its
 own; resuming the same session gets its window back.
@@ -133,7 +134,7 @@ opencode debug config | grep -A2 -E '"keepwarm"|"ember"'   # loaded?
 ```
 
 Cold guard, for about one small call — launch with a 5-second pseudo-TTL and a
-1-token floor, send a message, wait 6s, send another (refused), resend (through):
+1-token floor, send a message, wait 6s, send another (blocked):
 
 ```sh
 EMBER_TTL_SECONDS=5 EMBER_MIN_CONTEXT=1 opencode
@@ -153,7 +154,7 @@ correctly turned itself off.
 
 ## How it works
 
-`chat.message` (cold guard), `event` (token/price tracking, timers) and
+`chat.message` + `chat.params` (cold guard), `event` (token/price tracking, timers) and
 `command.execute.before` (the two commands, aborted before any model call).
 Pings go through `session.fork` → `session.prompt` → `session.delete`.
 

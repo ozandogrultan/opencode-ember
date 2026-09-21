@@ -109,12 +109,39 @@ describe("opencode-ember", () => {
 
     const plugin = await EmberPlugin({ client: mockClient } as any)
     const chatMessage = plugin["chat.message"]
+    const chatParams = plugin["chat.params"]
+    expect(chatMessage).toBeDefined()
+    expect(chatParams).toBeDefined()
 
     const input = { sessionID: "test-session-refuse" }
     const output = { parts: [{ type: "text", text: "Hello refuse" }] } as any
 
-    await expect(chatMessage!(input, output)).rejects.toThrow("ember: the prompt cache went cold")
+    // First attempt: chat.message does NOT throw unhandled error (prevents generic 500 in OpenCode)
     await expect(chatMessage!(input, output)).resolves.toBeUndefined()
+    expect(toasts.length).toBe(1)
+    expect(toasts[0].body.message).toContain("the prompt cache went cold")
+    expect(toasts[0].body.message).toContain("Prompt blocked by ember guard refuse")
+
+    // chat.params throws the informative message before provider call
+    await expect(chatParams!({ sessionID: "test-session-refuse" } as any, {} as any)).rejects.toThrow(
+      "Prompt blocked by ember guard refuse"
+    )
+
+    // Resend attempt: it STILL hard blocks (no soft drop once bypass)
+    await expect(chatMessage!(input, output)).resolves.toBeUndefined()
+    await expect(chatParams!({ sessionID: "test-session-refuse" } as any, {} as any)).rejects.toThrow(
+      "Prompt blocked by ember guard refuse"
+    )
+  })
+
+  it("supports /ember guard block as an alias for refuse", async () => {
+    const plugin = await EmberPlugin({ client: { tui: { showToast: async () => {} } } } as any)
+    const cmd = plugin["command.execute.before"]
+    expect(cmd).toBeDefined()
+
+    const input = { command: "ember", sessionID: "s1", arguments: "guard block" }
+    const output = { parts: [] } as any
+    await expect(cmd!(input, output)).rejects.toThrow("ember guard refuse")
   })
 
   it("does not warn if context is small or cache is warm", async () => {
