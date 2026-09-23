@@ -183,6 +183,8 @@ function writeStore(store: Store): void {
 export const EmberPlugin: Plugin = async ({ client }) => {
   const store = readStore()
   const sessions = new Map<string, Session>()
+  const pingForks = new Set<string>()
+  const helperSessions = new Set<string>()
 
   const state = (id: string): Session => {
     const existing = sessions.get(id)
@@ -278,6 +280,7 @@ export const EmberPlugin: Plugin = async ({ client }) => {
       const forked = await client.session.fork({ path: { id: s.id } })
       forkID = forked.data?.id ?? null
       if (!forkID) throw new Error("fork failed")
+      pingForks.add(forkID)
 
       const answer = await client.session.prompt({
         path: { id: forkID },
@@ -289,6 +292,7 @@ export const EmberPlugin: Plugin = async ({ client }) => {
       })
       const info = answer.data?.info
       const tokens = info?.tokens
+      if (info?.error) throw new Error(`the ping model returned an error: ${JSON.stringify(info.error)}`)
       if (!tokens) throw new Error("no usage on the ping")
 
       const read = tokens.cache.read
@@ -301,25 +305,27 @@ export const EmberPlugin: Plugin = async ({ client }) => {
       s.lastPing = { at: Date.now(), read, write, usd, warm }
 
       if (!warm) {
-        const why =
-          `the ping read ${read} and wrote ${fmtTok(write)} tokens (${fmtUsd(usd)}), ` +
-          `so the cache was already gone`
+        const why = read === 0 && write === 0
+          ? `the ping reported no cache activity (${fmtUsd(usd)}); the provider may not cache this prefix or report cache usage`
+          : `the ping read ${read} and wrote ${fmtTok(write)} tokens (${fmtUsd(usd)}), so the cache was already gone`
         await toast(`keepwarm stopped: ${why}`, "warning", 10 * 60_000)
         return stop(s, why)
       }
 
       // The ping refreshed the shared prefix, so the TTL now runs from here.
+      // No toast on success: pings fire every few minutes and would spam
+      // the TUI. Failures and stops below still notify.
       s.lastRequestAt = Date.now()
       s.pinging = false
       schedule(s)
       persistSession(s)
-      await toast(`keepwarm ping read ${fmtTok(read)} ${fmtUsd(usd)} · next in ${fmtDuration(s.every)}`, "success", 8000)
     } catch (error) {
       s.pinging = false
       const why = `the ping failed: ${error instanceof Error ? error.message : String(error)}`
       await toast(`keepwarm stopped: ${why}`, "error", 10 * 60_000)
       stop(s, why)
     } finally {
+      if (forkID) pingForks.delete(forkID)
       if (forkID) await client.session.delete({ path: { id: forkID } }).catch(() => undefined)
       s.pinging = false
     }
@@ -525,6 +531,16 @@ export const EmberPlugin: Plugin = async ({ client }) => {
     },
 
     "chat.message": async (input, output) => {
+      if (pingForks.has(input.sessionID) || helperSessions.has(input.sessionID)) return
+      if (!sessions.has(input.sessionID)) {
+        const session = client.session.get
+          ? await client.session.get({ path: { id: input.sessionID } }).catch(() => undefined)
+          : undefined
+        if (session?.data?.title === "ghost-hidden") {
+          helperSessions.add(input.sessionID)
+          return
+        }
+      }
       const s = state(input.sessionID)
       const text = textOf(output.parts)
       if (text.startsWith("/")) return

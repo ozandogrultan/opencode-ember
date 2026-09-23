@@ -158,10 +158,11 @@ context:
 /keepwarm 1h every 1m
 ```
 
-Wait a minute. A toast should read `ember ping read <Nk> $0.0x` with **read ≈
-your context size**: that is the proof the fork hit the main cache. If it says
-`ember stopped: the ping read 0 …`, the cache did not share and the plugin
-correctly turned itself off.
+Wait a minute, then run `/ember`. Its last-ping cache read should be close to
+your context size: that is the proof the fork hit the main cache. Successful
+pings are silent; failures and stops still show a toast. If the ping reports
+no cache activity, the provider may not cache this prefix or report cache
+usage, so keepwarm stops rather than paying for unverified pings.
 
 ## How it works
 

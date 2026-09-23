@@ -1,6 +1,6 @@
 import { describe, expect, it, beforeEach, afterEach } from "bun:test"
 import { EmberPlugin, parseDuration } from "./ember"
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs"
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import { join } from "node:path"
 import { tmpdir } from "node:os"
 
@@ -219,6 +219,19 @@ describe("opencode-ember", () => {
     tui: { showToast: async () => {} },
     session: { messages: async () => ({ data: [] }) },
   }
+
+  it("does not arm keepwarm for Ghost's temporary sessions", async () => {
+    const plugin = await EmberPlugin({ client: {
+      tui: { showToast: async () => {} },
+      session: {
+        get: async () => ({ data: { title: "ghost-hidden" } }),
+        messages: async () => { throw new Error("helper session should not hydrate") },
+      },
+    } } as any)
+
+    await plugin["chat.message"]!({ sessionID: "ghost-helper" }, { parts: [{ type: "text", text: "Suggest a reply" }] } as any)
+    expect(existsSync(stateFile)).toBe(false)
+  })
 
   it("arms a six-hour window at session start by default", async () => {
     const plugin = await EmberPlugin({ client: silentClient } as any)
