@@ -56,6 +56,7 @@ const STORE_VERSION = 2
 const BIG_TOKENS = envNumber("EMBER_MIN_CONTEXT") ?? 50_000
 const MIN_PING_MS = (envNumber("EMBER_MIN_PING_SECONDS") ?? 60) * 1000
 const PING_PROMPT = "Reply with the single word: warm"
+const STOP_NOTICE_MS = 5_000
 function stateFilePath(): string {
   return process.env.EMBER_STATE_FILE ?? join(homedir(), ".local", "share", "opencode", "ember.json")
 }
@@ -308,7 +309,7 @@ export const EmberPlugin: Plugin = async ({ client }) => {
         const why = read === 0 && write === 0
           ? `the ping reported no cache activity (${fmtUsd(usd)}); the provider may not cache this prefix or report cache usage`
           : `the ping read ${read} and wrote ${fmtTok(write)} tokens (${fmtUsd(usd)}), so the cache was already gone`
-        await toast(`keepwarm stopped: ${why}`, "warning", 10 * 60_000)
+        await toast(`keepwarm stopped: ${why}`, "warning", STOP_NOTICE_MS)
         return stop(s, why)
       }
 
@@ -322,7 +323,7 @@ export const EmberPlugin: Plugin = async ({ client }) => {
     } catch (error) {
       s.pinging = false
       const why = `the ping failed: ${error instanceof Error ? error.message : String(error)}`
-      await toast(`keepwarm stopped: ${why}`, "error", 10 * 60_000)
+      await toast(`keepwarm stopped: ${why}`, "error", STOP_NOTICE_MS)
       stop(s, why)
     } finally {
       if (forkID) pingForks.delete(forkID)

@@ -162,7 +162,9 @@ Wait a minute, then run `/ember`. Its last-ping cache read should be close to
 your context size: that is the proof the fork hit the main cache. Successful
 pings are silent; failures and stops still show a toast. If the ping reports
 no cache activity, the provider may not cache this prefix or report cache
-usage, so keepwarm stops rather than paying for unverified pings.
+usage, so keepwarm stops rather than paying for unverified pings. Stop notices
+appear briefly in the TUI (five seconds); `/keepwarm status` or `/ember` shows
+the reason afterward.
 
 ## How it works
 
