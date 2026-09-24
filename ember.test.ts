@@ -302,4 +302,25 @@ describe("opencode-ember", () => {
     const store = JSON.parse(readFileSync(stateFile, "utf8"))
     expect(store.sessions["opted-out"]).toBeUndefined()
   })
+
+  it("keeps another session's window when two instances share the state file", async () => {
+    const a = await EmberPlugin({ client: silentClient } as any)
+    const b = await EmberPlugin({ client: silentClient } as any)
+
+    await a["chat.message"]!({ sessionID: "proc-a" }, { parts: [{ type: "text", text: "Hi" }] } as any)
+    // b loaded its store snapshot before proc-a was armed; its own write
+    // must still preserve the window armed by the other instance.
+    await b["chat.message"]!({ sessionID: "proc-b" }, { parts: [{ type: "text", text: "Hi" }] } as any)
+
+    let store = JSON.parse(readFileSync(stateFile, "utf8"))
+    expect(store.sessions["proc-a"]).toBeDefined()
+    expect(store.sessions["proc-b"]).toBeDefined()
+
+    await a["chat.message"]!({ sessionID: "proc-a" }, { parts: [{ type: "text", text: "Again" }] } as any)
+    store = JSON.parse(readFileSync(stateFile, "utf8"))
+    expect(store.sessions["proc-b"]).toBeDefined()
+    expect(store.sessions["proc-a"].deadline).toBeGreaterThan(
+      Date.now() + 5 * 60 * 60 * 1000
+    )
+  })
 })

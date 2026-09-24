@@ -57,6 +57,7 @@ const BIG_TOKENS = envNumber("EMBER_MIN_CONTEXT") ?? 50_000
 const MIN_PING_MS = (envNumber("EMBER_MIN_PING_SECONDS") ?? 60) * 1000
 const PING_PROMPT = "Reply with the single word: warm"
 const STOP_NOTICE_MS = 5_000
+const STALE_MS = 24 * 60 * 60 * 1000
 function stateFilePath(): string {
   return process.env.EMBER_STATE_FILE ?? join(homedir(), ".local", "share", "opencode", "ember.json")
 }
@@ -170,12 +171,23 @@ function readStore(): Store {
   }
 }
 
-function writeStore(store: Store): void {
+function writeStore(current: Store, apply?: (fresh: Store) => void): void {
   try {
+    // Several opencode processes may share one state file (cmux spawns one
+    // per workspace). Re-read and merge instead of writing the possibly
+    // stale in-memory snapshot, or windows armed elsewhere get dropped.
+    const fresh = readStore()
+    fresh.always = current.always
+    fresh.guard = current.guard
+    const now = Date.now()
+    for (const [id, entry] of Object.entries(fresh.sessions)) {
+      if (now - entry.deadline > STALE_MS) delete fresh.sessions[id]
+    }
+    apply?.(fresh)
     const file = stateFilePath()
     mkdirSync(dirname(file), { recursive: true })
     const tmp = file + ".tmp"
-    writeFileSync(tmp, JSON.stringify(store, null, 2))
+    writeFileSync(tmp, JSON.stringify(fresh, null, 2))
     renameSync(tmp, file)
   } catch {
     // a failed write only costs us a restored window, never the conversation
@@ -220,9 +232,10 @@ export const EmberPlugin: Plugin = async ({ client }) => {
   }
 
   const persistSession = (s: Session) => {
-    if (s.deadline) store.sessions[s.id] = { deadline: s.deadline, every: s.every, ttl: s.ttl, continuous: s.continuous }
-    else delete store.sessions[s.id]
-    writeStore(store)
+    writeStore(store, (fresh) => {
+      if (s.deadline) fresh.sessions[s.id] = { deadline: s.deadline, every: s.every, ttl: s.ttl, continuous: s.continuous }
+      else delete fresh.sessions[s.id]
+    })
   }
 
   const clearTimer = (s: Session) => {
@@ -257,6 +270,10 @@ export const EmberPlugin: Plugin = async ({ client }) => {
       s.deadline = now + DEFAULT_WINDOW_MS
       persistSession(s)
     }
+    // A ping past the cache tier would cold-write the fork itself; the loop
+    // then stops and the context is dead anyway. Wait for the next real turn
+    // to refresh lastRequestAt instead of paying to rebuild a dead cache.
+    if (s.lastRequestAt && now >= s.lastRequestAt + s.ttl) return
     const base = s.lastRequestAt || now
     const delay = Math.max(1000, Math.min(base + s.every - now, s.deadline - now))
     s.timer = setTimeout(() => void ping(s), delay)
@@ -657,8 +674,9 @@ export const EmberPlugin: Plugin = async ({ client }) => {
             if (!s) break
             clearTimer(s)
             sessions.delete(s.id)
-            delete store.sessions[s.id]
-            writeStore(store)
+            writeStore(store, (fresh) => {
+              delete fresh.sessions[s.id]
+            })
             break
           }
         }

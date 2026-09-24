@@ -87,9 +87,10 @@ in `opencode.json`, then restart opencode.
 
 Warming belongs to each session. By default it renews as long as opencode is
 running; explicitly timed windows end after their duration. A second session
-gets its own timer, and a resumed session restores its setting. Run
-`/keepwarm off` to disable the default and warm only on request. A stopped
-process, sleeping computer or failed ping can still let the provider cache expire.
+gets its own timer, and a resumed session restores its setting. A session
+resumed after the cache tier already expired cannot be rescued retroactively:
+its first turn is cold by definition, and warming resumes from that point. Run
+`/keepwarm off` to disable the default and warm only on request.
 
 ## The 5-minute tier (read this)
 
@@ -113,6 +114,9 @@ duration if you would rather bound the cost per session.
 - After every ping the plugin checks the usage: if it read nothing, or wrote at
   least a tenth of what it read, it concludes the cache was already gone and
   **stops itself** rather than hammering a cold cache.
+- Pings only run while the last request is still inside the cache tier. A
+  session resumed after the tier expired (process restart, sleep, long break)
+  waits for your next turn instead of cold-rewriting the fork itself.
 - An explicitly timed window expires without editing or clearing the session.
 
 ## Configuration
@@ -124,9 +128,12 @@ duration if you would rather bound the cost per session.
 | `EMBER_MIN_PING_SECONDS` | `60` | ping floor |
 
 State lives in `~/.local/share/opencode/ember.json` and is stamped with a
-version. A state file written before warming was on by default is upgraded
-silently: its `always: false` was the old default rather than a choice, so it is
-ignored once and the new default applies. Delete the file to reset.
+version. Multiple opencode processes (one per workspace/cmux session) share the
+file: every write re-reads it and merges, so a process writing its own session's
+window never drops sessions armed elsewhere. A state file written before warming
+was on by default is upgraded silently: its `always: false` was the old default
+rather than a choice, so it is ignored once and the new default applies. Delete
+the file to reset.
 
 ## Testing
 
