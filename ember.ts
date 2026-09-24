@@ -8,8 +8,8 @@ import { dirname, join } from "node:path"
 // A port of karanb192/claude-code-mods `cache-tax` (the "Mod" form) to
 // opencode's plugin API. It does three things:
 //
-//   1. Keep the prompt cache warm. Every session arms a six-hour window by
-//      default; after the cache TTL has almost lapsed the plugin sends one
+//   1. Keep the prompt cache warm. Every session stays armed by default;
+//      after the cache TTL has almost lapsed the plugin sends one
 //      request over a *fork* of the session, which refreshes the same prefix
 //      without appending a single message to the real conversation.
 //      `/keepwarm off` stops it for the session and turns the default off.
@@ -94,6 +94,7 @@ type Session = {
   pendingColdWrite: boolean
   misses: Miss[]
   deadline: number
+  continuous: boolean
   stopped: string | null
   lastPing: Ping | null
   pinging: boolean
@@ -104,7 +105,7 @@ type Store = {
   version: number
   guard: GuardMode
   always: boolean
-  sessions: Record<string, { deadline: number; every: number; ttl?: number }>
+  sessions: Record<string, { deadline: number; every: number; ttl?: number; continuous?: boolean }>
 }
 
 function envNumber(name: string): number | null {
@@ -206,6 +207,9 @@ export const EmberPlugin: Plugin = async ({ client }) => {
       pendingColdWrite: false,
       misses: [],
       deadline: persisted?.deadline ?? 0,
+      // Older stores predate this flag; their default windows were armed by
+      // `always`, so restore those as continuous when that setting is on.
+      continuous: persisted?.continuous ?? store.always,
       stopped: null,
       lastPing: null,
       pinging: false,
@@ -216,7 +220,7 @@ export const EmberPlugin: Plugin = async ({ client }) => {
   }
 
   const persistSession = (s: Session) => {
-    if (s.deadline) store.sessions[s.id] = { deadline: s.deadline, every: s.every, ttl: s.ttl }
+    if (s.deadline) store.sessions[s.id] = { deadline: s.deadline, every: s.every, ttl: s.ttl, continuous: s.continuous }
     else delete store.sessions[s.id]
     writeStore(store)
   }
@@ -232,12 +236,13 @@ export const EmberPlugin: Plugin = async ({ client }) => {
     const left = fmtDuration(s.deadline - Date.now())
     const next = s.lastRequestAt ? ` · ping in ${fmtDuration(s.lastRequestAt + s.every - Date.now())}` : " · waiting for the first turn"
     const ping = s.lastPing ? ` · last ping read ${fmtTok(s.lastPing.read)} ${fmtUsd(s.lastPing.usd)}` : ""
-    return `keepwarm ${left} left${next}${ping}`
+    return `keepwarm ${s.continuous ? "always" : `${left} left`}${next}${ping}`
   }
 
   const stop = (s: Session, why: string | null) => {
     clearTimer(s)
     s.deadline = 0
+    s.continuous = false
     s.stopped = why
     s.lastPing = why ? s.lastPing : null
     persistSession(s)
@@ -247,17 +252,22 @@ export const EmberPlugin: Plugin = async ({ client }) => {
     clearTimer(s)
     if (!s.deadline) return
     const now = Date.now()
-    if (now >= s.deadline) return stop(s, null)
+    if (now >= s.deadline) {
+      if (!s.continuous) return stop(s, null)
+      s.deadline = now + DEFAULT_WINDOW_MS
+      persistSession(s)
+    }
     const base = s.lastRequestAt || now
     const delay = Math.max(1000, Math.min(base + s.every - now, s.deadline - now))
     s.timer = setTimeout(() => void ping(s), delay)
   }
 
-  const arm = (s: Session, windowMs?: number, ttl?: number) => {
+  const arm = (s: Session, windowMs?: number, ttl?: number, continuous = false) => {
     if (ttl) s.ttl = ttl
     s.every = everyFor(s.ttl)
     if (windowMs) s.deadline = Date.now() + windowMs
     if (!s.deadline) return
+    s.continuous = continuous
     s.stopped = null
     schedule(s)
     persistSession(s)
@@ -265,7 +275,11 @@ export const EmberPlugin: Plugin = async ({ client }) => {
 
   const ping = async (s: Session) => {
     if (s.pinging) return
-    if (!s.deadline || Date.now() >= s.deadline) return stop(s, null)
+    if (!s.deadline || (Date.now() >= s.deadline && !s.continuous)) return stop(s, null)
+    if (Date.now() >= s.deadline) {
+      s.deadline = Date.now() + DEFAULT_WINDOW_MS
+      persistSession(s)
+    }
     if (!s.lastModel) return stop(s, "no model seen yet for this session")
     s.pinging = true
     let forkID: string | null = null
@@ -447,8 +461,8 @@ export const EmberPlugin: Plugin = async ({ client }) => {
 
     if (sub === "always") {
       store.always = true
-      arm(s, DEFAULT_WINDOW_MS)
-      return { text: `keepwarm armed for ${fmtDuration(DEFAULT_WINDOW_MS)} at every session start`, keepwarm: true }
+      arm(s, DEFAULT_WINDOW_MS, undefined, true)
+      return { text: "keepwarm always on for this and future sessions", keepwarm: true }
     }
 
     // <dur> [every <dur>] [ttl <dur>]
@@ -471,7 +485,9 @@ export const EmberPlugin: Plugin = async ({ client }) => {
         i++
       }
     }
-    arm(s, window, ttl)
+    // A plain /keepwarm refreshes the always-on session; only an explicit
+    // duration opts this session into a bounded window.
+    arm(s, window, ttl, !sub && store.always)
     if (every) {
       s.every = every
       schedule(s)
@@ -484,7 +500,7 @@ export const EmberPlugin: Plugin = async ({ client }) => {
     [
       "/keepwarm                 keep this session warm for six hours",
       "/keepwarm 90m             a window of your own (also 2h30m, 6h)",
-      "/keepwarm always          arm at every session start (already the default)",
+      "/keepwarm always          keep this and future sessions armed until closed (default)",
       "/keepwarm 6h every 2m     override the ping period (floor 1m)",
       "/keepwarm 6h ttl 1h       assume the 1-hour cache tier",
       "/keepwarm status          the status line",
@@ -548,7 +564,7 @@ export const EmberPlugin: Plugin = async ({ client }) => {
 
       if (!s.hydrated) await hydrate(s)
 
-      if (store.always && !s.deadline) arm(s, DEFAULT_WINDOW_MS)
+      if (store.always && !s.deadline) arm(s, DEFAULT_WINDOW_MS, undefined, true)
 
       const cold = isCold(s) && s.ctx >= BIG_TOKENS
       if (!cold) return
@@ -602,7 +618,7 @@ export const EmberPlugin: Plugin = async ({ client }) => {
                 const price = priceOf(s.lastModel)
                 const usd = price ? (part.tokens.cache.write * price[1]) / 1e6 : null
                 s.misses.push({ at: Date.now(), tokens: part.tokens.cache.write, usd })
-                if (!s.deadline) arm(s, AUTO_WARM_MS)
+                if (!s.deadline) arm(s, AUTO_WARM_MS, undefined, store.always)
               }
               s.pendingColdWrite = false
             }

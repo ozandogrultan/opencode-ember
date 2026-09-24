@@ -245,6 +245,37 @@ describe("opencode-ember", () => {
     const hours = (armed.deadline - Date.now()) / (60 * 60 * 1000)
     expect(hours).toBeGreaterThan(5.9)
     expect(hours).toBeLessThanOrEqual(6)
+    expect(armed.continuous).toBe(true)
+  })
+
+  it("renews an expired always-on window when the session becomes idle", async () => {
+    writeFileSync(stateFile, JSON.stringify({
+      version: 2, guard: "warn", always: true,
+      sessions: { resumed: { deadline: Date.now() - 1000, every: 240000, ttl: 300000 } },
+    }))
+    const plugin = await EmberPlugin({ client: silentClient } as any)
+    try {
+      await plugin["chat.message"]!({ sessionID: "resumed" }, { parts: [{ type: "text", text: "Hi" }] } as any)
+      await plugin.event!({ event: { type: "session.idle", properties: { sessionID: "resumed" } } } as any)
+      const renewed = JSON.parse(readFileSync(stateFile, "utf8")).sessions.resumed
+      expect(renewed.continuous).toBe(true)
+      expect(renewed.deadline).toBeGreaterThan(Date.now() + 5 * 60 * 60 * 1000)
+    } finally {
+      await plugin.dispose!()
+    }
+  })
+
+  it("leaves an explicitly timed window bounded even with always enabled", async () => {
+    const plugin = await EmberPlugin({ client: silentClient } as any)
+    try {
+      await plugin["chat.message"]!({ sessionID: "timed" }, { parts: [{ type: "text", text: "Hi" }] } as any)
+      await expect(plugin["command.execute.before"]!(
+        { command: "keepwarm", sessionID: "timed", arguments: "90m" }, { parts: [] } as any,
+      )).rejects.toThrow("keepwarm")
+      expect(JSON.parse(readFileSync(stateFile, "utf8")).sessions.timed.continuous).toBe(false)
+    } finally {
+      await plugin.dispose!()
+    }
   })
 
   it("ignores a legacy store's always:false and warms anyway", async () => {

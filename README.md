@@ -13,7 +13,7 @@ dependencies.
 
 ## What it does
 
-- **The cache stays warm by default.** Every session arms a **six-hour** window;
+- **The cache stays warm by default.** Every session stays armed while opencode runs;
   after the cache tier has almost lapsed, the plugin sends one request over a
   **fork** of the session. The fork shares the session's model, agent, tools and
   system prompt, so its prefix is byte-identical and only appends: the provider
@@ -74,9 +74,9 @@ in `opencode.json`, then restart opencode.
 
 | command | effect |
 | --- | --- |
-| `/keepwarm` | arm six hours for this session |
+| `/keepwarm` | refresh always-on warming (or arm six hours if the default is off) |
 | `/keepwarm 90m` | a window of your own (`2h30m`, `6h`, …) |
-| `/keepwarm always` | arm a window at every session start (already the default) |
+| `/keepwarm always` | keep this and future sessions armed until closed (already the default) |
 | `/keepwarm 6h every 2m` | override the ping period (floor 1m) |
 | `/keepwarm 6h ttl 1h` | assume the 1-hour cache tier |
 | `/keepwarm status` | the status line |
@@ -85,10 +85,11 @@ in `opencode.json`, then restart opencode.
 | `/ember guard warn` | show the price and send (default) |
 | `/ember guard refuse` | hard block cold sends |
 
-A window belongs to the session that armed it. A second session starts with its
-own; resuming the same session gets its window back. Warming is on by default, so
-a session arms its six hours the first time you speak in it — run `/keepwarm off`
-if you would rather warm only on request.
+Warming belongs to each session. By default it renews as long as opencode is
+running; explicitly timed windows end after their duration. A second session
+gets its own timer, and a resumed session restores its setting. Run
+`/keepwarm off` to disable the default and warm only on request. A stopped
+process, sleeping computer or failed ping can still let the provider cache expire.
 
 ## The 5-minute tier (read this)
 
@@ -101,9 +102,9 @@ Economically that matters: on a 200k-token context a cache read is ~$0.05 and a
 cold write ~$4, so ~80 pings cost one cold write. Warm a one-hour break and you
 win; warm a whole working day on the 5-minute tier and you are near break-even.
 
-Six hours is the default window, so that is the arithmetic you opt into: an idle
-session keeps paying cache reads until the window lapses. Turn it off with
-`/keepwarm off` if you would rather decide per session.
+Always-on warming can keep paying for cache reads beyond six hours while the
+session remains open. Turn it off with `/keepwarm off` or use an explicit
+duration if you would rather bound the cost per session.
 
 ## It will not invalidate your cache
 
@@ -112,8 +113,7 @@ session keeps paying cache reads until the window lapses. Turn it off with
 - After every ping the plugin checks the usage: if it read nothing, or wrote at
   least a tenth of what it read, it concludes the cache was already gone and
   **stops itself** rather than hammering a cold cache.
-- Window expiry only stops the timer. It never edits, clears, or re-sends
-  anything.
+- An explicitly timed window expires without editing or clearing the session.
 
 ## Configuration
 
