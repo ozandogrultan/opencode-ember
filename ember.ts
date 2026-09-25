@@ -58,6 +58,8 @@ const MIN_PING_MS = (envNumber("EMBER_MIN_PING_SECONDS") ?? 60) * 1000
 const PING_PROMPT = "Reply with the single word: warm"
 const STOP_NOTICE_MS = 5_000
 const STALE_MS = 24 * 60 * 60 * 1000
+const GAIN_RETENTION_DAYS = 90
+const GAIN_TABLE_DAYS = 21
 function stateFilePath(): string {
   return process.env.EMBER_STATE_FILE ?? join(homedir(), ".local", "share", "opencode", "ember.json")
 }
@@ -108,6 +110,17 @@ type Store = {
   guard: GuardMode
   always: boolean
   sessions: Record<string, { deadline: number; every: number; ttl?: number; continuous?: boolean }>
+  days: Record<string, Day>
+}
+
+type Day = {
+  pings: number
+  read: number
+  pingUsd: number
+  keptUsd: number
+  colds: number
+  coldUsd: number
+  warmMs: number
 }
 
 function envNumber(name: string): number | null {
@@ -156,19 +169,37 @@ function everyFor(ttl: number): number {
   return Math.max(MIN_PING_MS, Math.min(ttl - slack, 55 * 60 * 1000))
 }
 
+function readDay(raw: unknown): Day {
+  const d = (raw ?? {}) as Partial<Day>
+  return {
+    pings: Number(d.pings) || 0,
+    read: Number(d.read) || 0,
+    pingUsd: Number(d.pingUsd) || 0,
+    keptUsd: Number(d.keptUsd) || 0,
+    colds: Number(d.colds) || 0,
+    coldUsd: Number(d.coldUsd) || 0,
+    warmMs: Number(d.warmMs) || 0,
+  }
+}
+
 function readStore(): Store {
   try {
     const file = stateFilePath()
     const parsed = JSON.parse(readFileSync(file, "utf8"))
-    const stamped = parsed.version === STORE_VERSION
+    // v2 and v3 both carry a deliberate always switch; an unstamped (v1)
+    // store's false is the old default rather than a choice.
+    const stamped = parsed.version === STORE_VERSION || parsed.version === 2
     return {
       version: STORE_VERSION,
       guard: parsed.guard === "refuse" || parsed.guard === "block" ? "refuse" : "warn",
       always: stamped ? parsed.always !== false : true,
       sessions: parsed.sessions && typeof parsed.sessions === "object" ? parsed.sessions : {},
+      days: parsed.days && typeof parsed.days === "object"
+        ? Object.fromEntries(Object.entries(parsed.days).map(([k, v]) => [k, readDay(v)]))
+        : {},
     }
   } catch {
-    return { version: STORE_VERSION, guard: "warn", always: true, sessions: {} }
+    return { version: STORE_VERSION, guard: "warn", always: true, sessions: {}, days: {} }
   }
 }
 
@@ -183,6 +214,10 @@ function writeStore(current: Store, apply?: (fresh: Store) => void): void {
     const now = Date.now()
     for (const [id, entry] of Object.entries(fresh.sessions)) {
       if (now - entry.deadline > STALE_MS) delete fresh.sessions[id]
+    }
+    const dayKeys = Object.keys(fresh.days).sort()
+    while (dayKeys.length > GAIN_RETENTION_DAYS) {
+      delete fresh.days[dayKeys.shift()!]
     }
     apply?.(fresh)
     const file = stateFilePath()
@@ -237,6 +272,17 @@ export const EmberPlugin: Plugin = async ({ client }) => {
     writeStore(store, (fresh) => {
       if (s.deadline) fresh.sessions[s.id] = { deadline: s.deadline, every: s.every, ttl: s.ttl, continuous: s.continuous }
       else delete fresh.sessions[s.id]
+    })
+  }
+
+  // Increment a today-bucket for /ember gain. Reads the file fresh via
+  // writeStore, so days recorded by other processes are preserved.
+  const recordHistory = (apply: (d: Day) => void) => {
+    writeStore(store, (fresh) => {
+      const key = new Date().toISOString().slice(0, 10)
+      const day = fresh.days[key] ?? { pings: 0, read: 0, pingUsd: 0, keptUsd: 0, colds: 0, coldUsd: 0, warmMs: 0 }
+      apply(day)
+      fresh.days[key] = day
     })
   }
 
@@ -376,6 +422,13 @@ export const EmberPlugin: Plugin = async ({ client }) => {
       s.pinging = false
       schedule(s)
       persistSession(s)
+      recordHistory((d) => {
+        d.pings++
+        d.read += read
+        d.pingUsd += usd ?? 0
+        d.keptUsd += price ? (read * price[1]) / 1e6 : 0
+        d.warmMs += s.every
+      })
     } catch (error) {
       s.pinging = false
       s.stumble++
@@ -439,6 +492,55 @@ export const EmberPlugin: Plugin = async ({ client }) => {
         s.misses.length ? ` — ${fmtUsd(s.misses.reduce((a, m) => a + (m.usd ?? 0), 0))}` : ""
       }`,
     ]
+    return lines.join("\n")
+  }
+
+  const meter = (fraction: number, width = 26): string => {
+    const filled = Math.max(0, Math.min(width, Math.round(fraction * width)))
+    return "█".repeat(filled) + "░".repeat(width - filled)
+  }
+
+  const gainCard = (): string => {
+    const days = Object.entries(store.days).sort(([a], [b]) => (a < b ? -1 : 1))
+    if (days.length === 0) return "ember gain: no history yet — heartbeats and cold writes record as they happen"
+    let pings = 0, read = 0, pingUsd = 0, keptUsd = 0, colds = 0, coldUsd = 0, warmMs = 0
+    for (const [, d] of days) {
+      pings += d.pings
+      read += d.read
+      pingUsd += d.pingUsd
+      keptUsd += d.keptUsd
+      colds += d.colds
+      coldUsd += d.coldUsd
+      warmMs += d.warmMs
+    }
+    const net = keptUsd - pingUsd - coldUsd
+    const yieldPct = keptUsd > 0 ? net / keptUsd : 0
+    const lines = [
+      `Ember Cache Savings (All Sessions, ${days[0][0]} → ${days[days.length - 1][0]})`,
+      "",
+      `Warm heartbeats:   ${pings.toLocaleString("en-US")}`,
+      `Tokens kept warm:  ${fmtTok(read)} covered by reads`,
+      `Kept-warm value:   ${fmtUsd(keptUsd)} (the cold re-write price of those reads)`,
+      `Ping spend:        ${fmtUsd(pingUsd)}${pings ? ` (avg ${fmtUsd(pingUsd / pings)}/ping)` : ""}`,
+      `Cold writes:       ${colds.toLocaleString("en-US")} for ${fmtUsd(coldUsd)}`,
+      `Net saved:         ≈ ${fmtUsd(net)}`,
+      `Warming yield:     ${meter(yieldPct)} ${(yieldPct * 100).toFixed(1)}%`,
+      `Idle held warm:    ≈ ${fmtDuration(warmMs)}`,
+      "",
+      "By Day",
+    ]
+    const recent = days.slice(-GAIN_TABLE_DAYS).reverse()
+    const maxNet = Math.max(...recent.map(([, d]) => d.keptUsd - d.pingUsd - d.coldUsd), 1e-6)
+    for (const [key, d] of recent) {
+      const dayNet = d.keptUsd - d.pingUsd - d.coldUsd
+      const bar = dayNet <= 0
+        ? "│" + "░".repeat(12) + "│"
+        : "│" + "█".repeat(Math.max(1, Math.round((dayNet / maxNet) * 12))).padEnd(12, " ") + "│"
+      lines.push(
+        `${key.slice(5)}  pings ${String(d.pings).padStart(4)}  kept ${fmtTok(d.read).padStart(7)}  ` +
+        `net ${fmtUsd(dayNet).padStart(7)}  ${bar}${d.colds ? `  cold ×${d.colds}` : ""}`
+      )
+    }
     return lines.join("\n")
   }
 
@@ -555,6 +657,9 @@ export const EmberPlugin: Plugin = async ({ client }) => {
       "/keepwarm status          the status line",
       "/keepwarm off             stop, forget the window, turn always off",
       "/ember                    the card",
+      "/ember gain               the historical savings report (90 days)",
+      "/ember discover           alias for /ember gain",
+      "/ember                    the card",
       "/ember guard warn         show the price and send (default)",
       "/ember guard refuse       hard block cold sends",
     ].join("\n")
@@ -586,7 +691,9 @@ export const EmberPlugin: Plugin = async ({ client }) => {
             message = "usage: /ember guard warn|refuse"
           }
         } else {
-          message = card(s)
+          const sub = parts[0]?.toLowerCase()
+          if (sub === "gain" || sub === "discover") message = gainCard()
+          else message = card(s)
         }
       }
       // The command text is never sent to the model: the toast carries the
@@ -668,6 +775,10 @@ export const EmberPlugin: Plugin = async ({ client }) => {
                 const usd = price ? (part.tokens.cache.write * price[1]) / 1e6 : null
                 s.misses.push({ at: Date.now(), tokens: part.tokens.cache.write, usd })
                 if (!s.deadline) arm(s, AUTO_WARM_MS, undefined, store.always)
+                recordHistory((d) => {
+                  d.colds++
+                  d.coldUsd += usd ?? 0
+                })
               }
               s.pendingColdWrite = false
             }

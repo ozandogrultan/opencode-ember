@@ -27,6 +27,11 @@ dependencies.
 - **`/ember` keeps score.** Warm or cold, context size, cold-rewrite price, the
   break-even (how many pings cost one cold write, and the idle that covers),
   keepwarm state, guard mode, and this session's cold writes.
+- **`/ember gain` reports history.** Every warm heartbeat and every paid cold
+  write is bucketed per day (kept warm for up to 90 days), and the report shows
+  total heartbeats, tokens kept warm, the kept-warm value against ping spend and
+  realized cold writes, net savings, a warming-yield meter, and a per-day
+  impact table — in the spirit of `rtk gain`. `/ember discover` is an alias.
 
 ## Requirements
 
@@ -82,6 +87,7 @@ in `opencode.json`, then restart opencode.
 | `/keepwarm status` | the status line |
 | `/keepwarm off` | stop, forget the window, turn the default off |
 | `/ember` | the card |
+| `/ember gain` | the historical savings report (alias `/ember discover`) |
 | `/ember guard warn` | show the price and send (default) |
 | `/ember guard refuse` | hard block cold sends |
 
@@ -133,10 +139,11 @@ duration if you would rather bound the cost per session.
 State lives in `~/.local/share/opencode/ember.json` and is stamped with a
 version. Multiple opencode processes (one per workspace/cmux session) share the
 file: every write re-reads it and merges, so a process writing its own session's
-window never drops sessions armed elsewhere. A state file written before warming
-was on by default is upgraded silently: its `always: false` was the old default
-rather than a choice, so it is ignored once and the new default applies. Delete
-the file to reset.
+window never drops sessions armed elsewhere. Heartbeat and cold-write history is
+bucketed per day and trimmed to the last 90 days for `/ember gain`. A state file
+written before warming was on by default is upgraded silently: its `always:
+false` was the old default rather than a choice, so it is ignored once and the
+new default applies. Delete the file to reset.
 
 ## Testing
 
