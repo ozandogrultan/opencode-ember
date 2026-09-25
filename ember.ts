@@ -100,6 +100,7 @@ type Session = {
   lastPing: Ping | null
   pinging: boolean
   timer: ReturnType<typeof setTimeout> | null
+  stumble: number
 }
 
 type Store = {
@@ -226,6 +227,7 @@ export const EmberPlugin: Plugin = async ({ client }) => {
       lastPing: null,
       pinging: false,
       timer: null,
+      stumble: 0,
     }
     sessions.set(id, s)
     return s
@@ -334,15 +336,38 @@ export const EmberPlugin: Plugin = async ({ client }) => {
         ? (read * price[0] + write * price[1] + tokens.input * (price[1] / 2) + tokens.output * price[2]) / 1e6
         : null
       const warm = read > 0 && write < Math.max(1000, read / 10)
+      const silent = read === 0 && write === 0
       s.lastPing = { at: Date.now(), read, write, usd, warm }
 
-      if (!warm) {
-        const why = read === 0 && write === 0
-          ? `the ping reported no cache activity (${fmtUsd(usd)}); the provider may not cache this prefix or report cache usage`
-          : `the ping read ${read} and wrote ${fmtTok(write)} tokens (${fmtUsd(usd)}), so the cache was already gone`
+      if (!warm && silent) {
+        // No cache numbers at all usually means the provider left usage off
+        // the ping, not that the cache is gone (a truly cold ping would
+        // write). Retry once at the next cadence; stop only if it happens
+        // twice in a row, so one flaky usage report cannot kill the heartbeat.
+        s.stumble++
+        if (s.stumble < 2) {
+          s.lastRequestAt = Date.now()
+          s.pinging = false
+          schedule(s)
+          persistSession(s)
+          return
+        }
+        const why =
+          `the ping reported no cache activity on consecutive pings (${fmtUsd(usd)}); ` +
+          `the provider may not cache this prefix or report cache usage`
         await toast(`keepwarm stopped: ${why}`, "warning", STOP_NOTICE_MS)
         return stop(s, why)
       }
+
+      if (!warm) {
+        s.stumble = 0
+        const why =
+          `the ping read ${read} and wrote ${fmtTok(write)} tokens (${fmtUsd(usd)}), so the cache was already gone`
+        await toast(`keepwarm stopped: ${why}`, "warning", STOP_NOTICE_MS)
+        return stop(s, why)
+      }
+
+      s.stumble = 0
 
       // The ping refreshed the shared prefix, so the TTL now runs from here.
       // No toast on success: pings fire every few minutes and would spam
@@ -353,6 +378,13 @@ export const EmberPlugin: Plugin = async ({ client }) => {
       persistSession(s)
     } catch (error) {
       s.pinging = false
+      s.stumble++
+      // A transient network or API hiccup should not stop warming for good;
+      // retry at the next cadence and stop only after two in a row.
+      if (s.stumble < 2) {
+        schedule(s)
+        return
+      }
       const why = `the ping failed: ${error instanceof Error ? error.message : String(error)}`
       await toast(`keepwarm stopped: ${why}`, "error", STOP_NOTICE_MS)
       stop(s, why)

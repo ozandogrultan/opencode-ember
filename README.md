@@ -111,9 +111,12 @@ duration if you would rather bound the cost per session.
 
 - Pings reuse the session's **exact** model, agent, tools and system prompt and
   send a constant one-line prompt. They only append.
-- After every ping the plugin checks the usage: if it read nothing, or wrote at
-  least a tenth of what it read, it concludes the cache was already gone and
-  **stops itself** rather than hammering a cold cache.
+- After every ping the plugin checks the usage: if it wrote at least a tenth of
+  what it read, it concludes the cache was already gone and **stops itself**
+  rather than hammering a cold cache. A ping that reports no cache numbers at
+  all is treated as inconclusive instead: it retries once and stops only after
+  two consecutive zero-activity readbacks, so one flaky usage report cannot
+  kill the heartbeat. A transient ping error also retries once before stopping.
 - Pings only run while the last request is still inside the cache tier. A
   session resumed after the tier expired (process restart, sleep, long break)
   waits for your next turn instead of cold-rewriting the fork itself.
