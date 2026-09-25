@@ -1,6 +1,6 @@
 {
   "name": "opencode-ember",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Keep an LLM prompt cache warm across breaks, guard cold rewrites before you pay for them, and score what a break actually cost. An opencode plugin.",
   "type": "module",
   "license": "MIT",

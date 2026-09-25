@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-09-25
+
 ### Added
 
 - Ember gain as a standalone CLI binary
@@ -30,5 +32,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   configurable TTL and ping period, and a shared state file that merges safely
   across opencode processes.
 
-[Unreleased]: https://github.com/ozandogrultan/opencode-ember/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/ozandogrultan/opencode-ember/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/ozandogrultan/opencode-ember/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/ozandogrultan/opencode-ember/releases/tag/v0.1.0
