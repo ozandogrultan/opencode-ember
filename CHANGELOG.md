@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-09-25
+
 ### Added
 
 - Pricing for GPT-5 and Gemini models
@@ -14,7 +16,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - Avoid creating `.bak` backup file on install
-
 ## [0.2.0] - 2026-09-25
 
 ### Added
@@ -40,6 +41,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   configurable TTL and ping period, and a shared state file that merges safely
   across opencode processes.
 
-[Unreleased]: https://github.com/ozandogrultan/opencode-ember/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/ozandogrultan/opencode-ember/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/ozandogrultan/opencode-ember/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/ozandogrultan/opencode-ember/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/ozandogrultan/opencode-ember/releases/tag/v0.1.0
