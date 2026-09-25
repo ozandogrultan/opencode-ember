@@ -18,7 +18,11 @@ import { dirname, join } from "node:path"
 //      informative message in the turn before any provider tokens are spent.
 //      `/ember guard warn` (default) shows the price and sends anyway.
 //   3. Keep score. `/ember` prints warm/cold, context, cold price, the
-//      break-even and this session's cold writes.
+//      break-even and this session's cold writes. `/ember gain` (alias
+//      `/ember discover`) reports the same over history: daily buckets of
+//      heartbeats, tokens kept warm, ping spend, cold writes and net savings.
+//      All dollar figures are ESTIMATES from the hard-coded PRICES table —
+//      models without a matching row read $0 and understate totals.
 //
 // Hard rule: keepwarm must never invalidate the cache. So a ping
 //   - runs on a fork of the same session with the same model and the same
@@ -520,10 +524,10 @@ export const EmberPlugin: Plugin = async ({ client }) => {
       "",
       `Warm heartbeats:   ${pings.toLocaleString("en-US")}`,
       `Tokens kept warm:  ${fmtTok(read)} covered by reads`,
-      `Kept-warm value:   ${fmtUsd(keptUsd)} (the cold re-write price of those reads)`,
+      `Kept-warm value:   ${fmtUsd(keptUsd)} (est. cold re-write price of those reads)`,
       `Ping spend:        ${fmtUsd(pingUsd)}${pings ? ` (avg ${fmtUsd(pingUsd / pings)}/ping)` : ""}`,
       `Cold writes:       ${colds.toLocaleString("en-US")} for ${fmtUsd(coldUsd)}`,
-      `Net saved:         ≈ ${fmtUsd(net)}`,
+      `Net saved:         ≈ ${fmtUsd(net)} (estimate)`,
       `Warming yield:     ${meter(yieldPct)} ${(yieldPct * 100).toFixed(1)}%`,
       `Idle held warm:    ≈ ${fmtDuration(warmMs)}`,
       "",

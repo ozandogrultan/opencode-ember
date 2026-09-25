@@ -136,6 +136,23 @@ duration if you would rather bound the cost per session.
 | `EMBER_MIN_CONTEXT` | `50000` | cold-guard context floor, tokens |
 | `EMBER_MIN_PING_SECONDS` | `60` | ping floor |
 
+## Prices and the reporting caveats (read this too)
+
+Dollar figures come from a small built-in table in `ember.ts` (`PRICES`: cache
+read, cache write and output rates per model family). Two consequences:
+
+- **Every figure is an estimate.** Prices are hard-coded list rates for the
+  Anthropic/OpenAI families the plugin knows; they do not follow your provider,
+  plan, negotiated rates, or prompt-fee changes. Treat every dollar value in
+  `/ember` and `/ember gain` as an approximation, not an invoice.
+- **Unpriced models read $0.00.** Models without a matching row — e.g. custom
+  OpenAI-compatible ids like `gpt-5.5` or provider relays — report no cost, so
+  the kept-warm value, ping spend, cold-write cost, net savings and the warming
+  yield meter all run understated (or read $0.00) for them. Raw counters —
+  heartbeat counts, tokens kept warm, idle time held warm, cold-write counts —
+  stay accurate regardless. Add a row to `PRICES` in `ember.ts` if you want
+  dollar accuracy for such a model.
+
 State lives in `~/.local/share/opencode/ember.json` and is stamped with a
 version. Multiple opencode processes (one per workspace/cmux session) share the
 file: every write re-reads it and merges, so a process writing its own session's
