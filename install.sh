@@ -25,12 +25,6 @@ dest="$cfg/plugins"
 mkdir -p "$dest"
 target="$dest/ember.ts"
 
-if [ -f "$target" ]; then
-  backup="$target.bak.$(date +%Y%m%d%H%M%S)"
-  cp "$target" "$backup"
-  echo "backed up existing plugin to $backup"
-fi
-
 cp "$src" "$target"
 echo "installed -> $target"
 
