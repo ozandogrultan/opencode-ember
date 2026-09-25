@@ -27,11 +27,12 @@ dependencies.
 - **`/ember` keeps score.** Warm or cold, context size, cold-rewrite price, the
   break-even (how many pings cost one cold write, and the idle that covers),
   keepwarm state, guard mode, and this session's cold writes.
-- **`/ember gain` reports history.** Every warm heartbeat and every paid cold
-  write is bucketed per day (kept warm for up to 90 days), and the report shows
-  total heartbeats, tokens kept warm, the kept-warm value against ping spend and
-  realized cold writes, net savings, a warming-yield meter, and a per-day
-  impact table — in the spirit of `rtk gain`. `/ember discover` is an alias.
+- **`ember gain` reports history.** Every warm heartbeat and every paid cold
+  write is bucketed per day (kept warm for up to 90 days), and the `ember gain`
+  terminal binary reports total heartbeats, tokens kept warm, the kept-warm
+  value against ping spend and realized cold writes, net savings, a
+  warming-yield meter, and a per-day impact table — in the spirit of `rtk gain`.
+  `ember discover` is an alias; `ember gain --json` dumps the raw buckets.
 
 ## Requirements
 
@@ -51,6 +52,12 @@ cd opencode-ember
 ```
 
 Then **restart opencode** — plugins are loaded at startup only.
+
+`install.sh` also links the report binary as `~/.local/bin/ember` (set
+`EMBER_BIN_DIR` to choose another directory), so `ember gain` works from any
+shell. It requires [`bun`](https://bun.sh) on PATH; an alternative is
+`npm install -g .` from the repo, or copy `gain.ts` somewhere on your PATH.
+`/ember gain` inside opencode tells you to use the binary instead.
 
 `install.sh` asks opencode for its own config directory (`opencode debug paths`)
 and copies `ember.ts` into `<config>/plugins/`, backing up any existing file.
@@ -75,6 +82,7 @@ in `opencode.json`, then restart opencode.
 ```
 /keepwarm [6h|90m] [every 2m] [ttl 1h] | always | status | off
 /ember [guard warn|refuse]
+ember gain | discover [--json]     # the report, from any shell
 ```
 
 | command | effect |
@@ -87,9 +95,9 @@ in `opencode.json`, then restart opencode.
 | `/keepwarm status` | the status line |
 | `/keepwarm off` | stop, forget the window, turn the default off |
 | `/ember` | the card |
-| `/ember gain` | the historical savings report (alias `/ember discover`) |
 | `/ember guard warn` | show the price and send (default) |
 | `/ember guard refuse` | hard block cold sends |
+| `ember gain` | terminal report over collected history (alias `ember discover`) |
 
 Warming belongs to each session. By default it renews as long as opencode is
 running; explicitly timed windows end after their duration. A second session
@@ -175,6 +183,7 @@ opencode debug config | grep -A2 -E '"keepwarm"|"ember"'   # loaded?
 /keepwarm 6h         # arms
 /ember               # card
 /ember guard warn    # switch guard
+ember gain           # the report (CLI)
 /keepwarm off
 ```
 

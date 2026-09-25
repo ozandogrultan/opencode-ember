@@ -10,5 +10,5 @@
     "noEmit": true,
     "forceConsistentCasingInFileNames": true
   },
-  "include": ["ember.ts"]
+  "include": ["ember.ts", "gain.ts"]
 }

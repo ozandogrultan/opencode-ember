@@ -18,11 +18,11 @@ import { dirname, join } from "node:path"
 //      informative message in the turn before any provider tokens are spent.
 //      `/ember guard warn` (default) shows the price and sends anyway.
 //   3. Keep score. `/ember` prints warm/cold, context, cold price, the
-//      break-even and this session's cold writes. `/ember gain` (alias
-//      `/ember discover`) reports the same over history: daily buckets of
-//      heartbeats, tokens kept warm, ping spend, cold writes and net savings.
-//      All dollar figures are ESTIMATES from the hard-coded PRICES table —
-//      models without a matching row read $0 and understate totals.
+//      break-even and this session's cold writes. Heartbeats and cold writes
+//      are also bucketed per day in the state file for the `ember gain`
+//      terminal binary to report. All dollar figures are ESTIMATES from the
+//      hard-coded PRICES table — models without a matching row read $0 and
+//      understate totals.
 //
 // Hard rule: keepwarm must never invalidate the cache. So a ping
 //   - runs on a fork of the same session with the same model and the same
@@ -63,7 +63,6 @@ const PING_PROMPT = "Reply with the single word: warm"
 const STOP_NOTICE_MS = 5_000
 const STALE_MS = 24 * 60 * 60 * 1000
 const GAIN_RETENTION_DAYS = 90
-const GAIN_TABLE_DAYS = 21
 function stateFilePath(): string {
   return process.env.EMBER_STATE_FILE ?? join(homedir(), ".local", "share", "opencode", "ember.json")
 }
@@ -499,55 +498,6 @@ export const EmberPlugin: Plugin = async ({ client }) => {
     return lines.join("\n")
   }
 
-  const meter = (fraction: number, width = 26): string => {
-    const filled = Math.max(0, Math.min(width, Math.round(fraction * width)))
-    return "█".repeat(filled) + "░".repeat(width - filled)
-  }
-
-  const gainCard = (): string => {
-    const days = Object.entries(store.days).sort(([a], [b]) => (a < b ? -1 : 1))
-    if (days.length === 0) return "ember gain: no history yet — heartbeats and cold writes record as they happen"
-    let pings = 0, read = 0, pingUsd = 0, keptUsd = 0, colds = 0, coldUsd = 0, warmMs = 0
-    for (const [, d] of days) {
-      pings += d.pings
-      read += d.read
-      pingUsd += d.pingUsd
-      keptUsd += d.keptUsd
-      colds += d.colds
-      coldUsd += d.coldUsd
-      warmMs += d.warmMs
-    }
-    const net = keptUsd - pingUsd - coldUsd
-    const yieldPct = keptUsd > 0 ? net / keptUsd : 0
-    const lines = [
-      `Ember Cache Savings (All Sessions, ${days[0][0]} → ${days[days.length - 1][0]})`,
-      "",
-      `Warm heartbeats:   ${pings.toLocaleString("en-US")}`,
-      `Tokens kept warm:  ${fmtTok(read)} covered by reads`,
-      `Kept-warm value:   ${fmtUsd(keptUsd)} (est. cold re-write price of those reads)`,
-      `Ping spend:        ${fmtUsd(pingUsd)}${pings ? ` (avg ${fmtUsd(pingUsd / pings)}/ping)` : ""}`,
-      `Cold writes:       ${colds.toLocaleString("en-US")} for ${fmtUsd(coldUsd)}`,
-      `Net saved:         ≈ ${fmtUsd(net)} (estimate)`,
-      `Warming yield:     ${meter(yieldPct)} ${(yieldPct * 100).toFixed(1)}%`,
-      `Idle held warm:    ≈ ${fmtDuration(warmMs)}`,
-      "",
-      "By Day",
-    ]
-    const recent = days.slice(-GAIN_TABLE_DAYS).reverse()
-    const maxNet = Math.max(...recent.map(([, d]) => d.keptUsd - d.pingUsd - d.coldUsd), 1e-6)
-    for (const [key, d] of recent) {
-      const dayNet = d.keptUsd - d.pingUsd - d.coldUsd
-      const bar = dayNet <= 0
-        ? "│" + "░".repeat(12) + "│"
-        : "│" + "█".repeat(Math.max(1, Math.round((dayNet / maxNet) * 12))).padEnd(12, " ") + "│"
-      lines.push(
-        `${key.slice(5)}  pings ${String(d.pings).padStart(4)}  kept ${fmtTok(d.read).padStart(7)}  ` +
-        `net ${fmtUsd(dayNet).padStart(7)}  ${bar}${d.colds ? `  cold ×${d.colds}` : ""}`
-      )
-    }
-    return lines.join("\n")
-  }
-
   const toast = async (
     message: string,
     variant: "info" | "success" | "warning" | "error" = "info",
@@ -660,9 +610,7 @@ export const EmberPlugin: Plugin = async ({ client }) => {
       "/keepwarm 6h ttl 1h       assume the 1-hour cache tier",
       "/keepwarm status          the status line",
       "/keepwarm off             stop, forget the window, turn always off",
-      "/ember                    the card",
-      "/ember gain               the historical savings report (90 days)",
-      "/ember discover           alias for /ember gain",
+      "/ember                    the card (history lives in `ember gain`)",
       "/ember                    the card",
       "/ember guard warn         show the price and send (default)",
       "/ember guard refuse       hard block cold sends",
@@ -696,8 +644,11 @@ export const EmberPlugin: Plugin = async ({ client }) => {
           }
         } else {
           const sub = parts[0]?.toLowerCase()
-          if (sub === "gain" || sub === "discover") message = gainCard()
-          else message = card(s)
+          if (sub === "gain" || sub === "discover") {
+            message = "ember gain moved to a terminal binary — run `ember gain` in a shell"
+          } else {
+            message = card(s)
+          }
         }
       }
       // The command text is never sent to the model: the toast carries the

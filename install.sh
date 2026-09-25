@@ -33,6 +33,13 @@ fi
 
 cp "$src" "$target"
 echo "installed -> $target"
+
+# Link the report binary next to the plugin source (bun runs TS directly).
+bin_dir="${EMBER_BIN_DIR:-$HOME/.local/bin}"
+mkdir -p "$bin_dir"
+ln -sf "$here/gain.ts" "$bin_dir/ember"
+echo "cli -> $bin_dir/ember   (run: ember gain  ·  ember discover)"
 echo
-echo "Restart opencode, then verify:"
+echo "Add the plugin, then restart opencode; verify with:"
 echo "  opencode debug config | grep -A2 -E '\"keepwarm\"|\"ember\"'"
+echo "  opencode debug config | grep -A3 ember | grep '\"ember\"'"

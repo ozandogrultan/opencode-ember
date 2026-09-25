@@ -291,24 +291,11 @@ describe("opencode-ember", () => {
     expect(store.version).toBe(2)
   })
 
-  it("renders the historical gain report from recorded daily buckets", async () => {
-    writeFileSync(stateFile, JSON.stringify({
-      version: 3, guard: "warn", always: false, sessions: {},
-      days: {
-        "2026-09-20": { pings: 120, read: 60_000_000, pingUsd: 0.6, keptUsd: 6, colds: 1, coldUsd: 2, warmMs: 480_000 },
-        "2026-09-21": { pings: 60, read: 30_000_000, pingUsd: 0.3, keptUsd: 3, colds: 0, coldUsd: 0, warmMs: 240_000 },
-      },
-    }))
-
+  it("points /ember gain at the CLI binary", async () => {
     const plugin = await EmberPlugin({ client: silentClient } as any)
     const cmd = plugin["command.execute.before"]
-
-    await expect(cmd!({ command: "ember", sessionID: "gain", arguments: "gain" }, { parts: [] } as any))
-      .rejects.toThrow(/Warming yield.*67\.8%/s)
-    await expect(cmd!({ command: "ember", sessionID: "gain", arguments: "discover" }, { parts: [] } as any))
-      .rejects.toThrow(/Net saved.*≈ \$6\.10/s)
-    await expect(cmd!({ command: "ember", sessionID: "gain", arguments: "" }, { parts: [] } as any))
-      .rejects.not.toThrow(/Warming yield/)
+    await expect(cmd!({ command: "ember", sessionID: "g", arguments: "gain" }, { parts: [] } as any))
+      .rejects.toThrow("ember gain moved to a terminal binary — run `ember gain` in a shell")
   })
 
   it("stays off when a stamped store was turned off", async () => {

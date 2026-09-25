@@ -9,12 +9,17 @@
   },
   "files": [
     "ember.ts",
+    "gain.ts",
     "README.md",
     "LICENSE"
   ],
+  "bin": {
+    "ember": "gain.ts"
+  },
   "scripts": {
     "test": "bun test",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "gain": "bun gain.ts"
   },
   "keywords": [
     "opencode",
