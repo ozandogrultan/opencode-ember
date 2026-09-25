@@ -40,9 +40,9 @@ body:
       options:
         - Warmth never starts, or stops early
         - Cold guard misprices or does not block
-        - `/keepwarm` command
-        - `/ember` card or `ember gain` report
-        - Installer (`install.sh`)
+        - "`/keepwarm` command"
+        - "`/ember` card or `ember gain` report"
+        - "Installer (`install.sh`)"
         - Other
     validations:
       required: true
