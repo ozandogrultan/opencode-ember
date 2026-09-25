@@ -188,14 +188,14 @@ describe("opencode-ember", () => {
             {
               info: {
                 role: "assistant",
-                providerID: "doctolib-litellm",
-                modelID: "gemini-3.8-flash-20260902",
+                providerID: "custom-provider",
+                modelID: "unpriced-custom-model",
                 tokens: { input: 1000, cache: { read: 120000, write: 0 } },
                 time: { completed: Date.now() - 10 * 60 * 1000 },
               },
             },
             {
-              info: { role: "user", agent: "build", model: { providerID: "doctolib-litellm", modelID: "gemini-3.8-flash-20260902" } },
+              info: { role: "user", agent: "build", model: { providerID: "custom-provider", modelID: "unpriced-custom-model" } },
             },
           ],
         }),
