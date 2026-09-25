@@ -221,6 +221,12 @@ Ported from [`karanb192/claude-code-mods` → `cache-tax`](https://github.com/ka
 The design, the price arithmetic and the safety rules are theirs; this is the
 opencode translation.
 
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for the check suite and commit
+conventions, [AGENTS.md](AGENTS.md) for the design rules, and
+[CHANGELOG.md](CHANGELOG.md) for what changed.
+
 ## License
 
 MIT © Ozan Dogrultan

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test"
-import { render, fmtTok, fmtUsd, main } from "./gain"
+import { render, fmtTok, fmtUsd, main } from "../gain"
 
 const days = {
   "2026-09-20": { pings: 120, read: 60_000_000, pingUsd: 0.6, keptUsd: 6, colds: 1, coldUsd: 2, warmMs: 480_000 },

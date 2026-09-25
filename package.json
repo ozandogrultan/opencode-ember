@@ -3,23 +3,15 @@
   "version": "0.1.0",
   "description": "Keep an LLM prompt cache warm across breaks, guard cold rewrites before you pay for them, and score what a break actually cost. An opencode plugin.",
   "type": "module",
-  "main": "ember.ts",
-  "exports": {
-    ".": "./ember.ts"
+  "license": "MIT",
+  "author": "Ozan Dogrultan",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ozandogrultan/opencode-ember.git"
   },
-  "files": [
-    "ember.ts",
-    "gain.ts",
-    "README.md",
-    "LICENSE"
-  ],
-  "bin": {
-    "ember": "gain.ts"
-  },
-  "scripts": {
-    "test": "bun test",
-    "typecheck": "tsc --noEmit",
-    "gain": "bun gain.ts"
+  "homepage": "https://github.com/ozandogrultan/opencode-ember#readme",
+  "bugs": {
+    "url": "https://github.com/ozandogrultan/opencode-ember/issues"
   },
   "keywords": [
     "opencode",
@@ -32,19 +24,46 @@
     "cost",
     "tokens"
   ],
-  "author": "Ozan Dogrultan",
-  "license": "MIT",
-  "repository": {
-    "type": "git",
-    "url": "git+https://github.com/ozandogrultan/opencode-ember.git"
+  "main": "ember.ts",
+  "exports": {
+    ".": "./ember.ts"
   },
-  "bugs": {
-    "url": "https://github.com/ozandogrultan/opencode-ember/issues"
+  "bin": {
+    "ember": "gain.ts"
   },
-  "homepage": "https://github.com/ozandogrultan/opencode-ember#readme",
+  "files": [
+    "ember.ts",
+    "gain.ts",
+    "CHANGELOG.md",
+    "README.md",
+    "LICENSE"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
+  "packageManager": "bun@1.4.2",
+  "engines": {
+    "opencode": ">=1.18.0"
+  },
+  "scripts": {
+    "prepare": "husky",
+    "test": "bun test && bash tests/changelog.sh",
+    "test:unit": "bun test",
+    "test:changelog": "bash tests/changelog.sh",
+    "typecheck": "tsc --noEmit",
+    "lint:sh": "for script in install.sh tests/*.sh scripts/*.sh; do bash -n \"$script\" || exit; done",
+    "gain": "bun gain.ts",
+    "prepublishOnly": "bun run test && bun run typecheck"
+  },
+  "peerDependencies": {
+    "@opencode-ai/plugin": "*"
+  },
   "devDependencies": {
-    "@opencode-ai/plugin": "^1.18.0",
-    "@types/node": "^24.0.0",
-    "typescript": "^5.8.0"
+    "@commitlint/cli": "^21.2.2",
+    "@commitlint/config-conventional": "^21.2.2",
+    "@opencode-ai/plugin": "1.18.31",
+    "@types/node": "24.13.5",
+    "husky": "^9.1.7",
+    "typescript": "5.9.3"
   }
 }

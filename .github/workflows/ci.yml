@@ -6,13 +6,58 @@ on:
   pull_request:
 
 jobs:
-  typecheck:
+  shell:
+    name: shell tests
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
+      - name: Install shellcheck
+        run: sudo apt-get update && sudo apt-get install -y shellcheck
+      - name: Syntax check
+        run: for script in install.sh tests/*.sh scripts/*.sh; do bash -n "$script"; done
+      - name: ShellCheck (errors)
+        run: shellcheck -x --severity=error install.sh tests/*.sh scripts/*.sh
+      - name: Changelog tooling
+        run: bash tests/changelog.sh
+      - name: CHANGELOG structure
+        run: bash scripts/changelog.sh check
+
+  test:
+    name: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
       - uses: oven-sh/setup-bun@v2
-        with:
-          bun-version: latest
       - run: bun install --frozen-lockfile
-      - run: bun test
+      - run: bun run test:unit
       - run: bun run typecheck
+
+  package:
+    name: package check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: oven-sh/setup-bun@v2
+      - run: bun install --frozen-lockfile
+      - name: Verify publishable tarball
+        run: npm pack --dry-run
+
+  commitlint:
+    name: commitlint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - uses: oven-sh/setup-bun@v2
+      - run: bun install --frozen-lockfile
+      - name: Lint commit messages
+        run: |
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            git fetch --no-tags origin "${{ github.base_ref }}"
+            from=$(git merge-base "origin/${{ github.base_ref }}" HEAD)
+          else
+            from="${{ github.event.before }}"
+            case "$from" in 0000000*) from="HEAD~1" ;; esac
+          fi
+          bunx commitlint --from "$from" --to HEAD --verbose
