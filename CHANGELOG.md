@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.1] - 2026-09-30
+
 ### Fixed
 
 - Adopt the always-on and guard settings changed by another opencode process instead of overwriting them from a stale snapshot
@@ -15,7 +17,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Count the last reply's uncached output as expected on the first ping, so a long final answer on a small context no longer reads as a lost cache
 - Stop arming and pinging subagent (child) sessions
 - Serialize state-file writes with a lock so concurrent opencode processes no longer lose each other's sessions
-
 ## [0.3.0] - 2026-09-25
 
 ### Added
@@ -50,7 +51,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   configurable TTL and ping period, and a shared state file that merges safely
   across opencode processes.
 
-[Unreleased]: https://github.com/ozandogrultan/opencode-ember/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/ozandogrultan/opencode-ember/compare/v0.3.1...HEAD
+[0.3.1]: https://github.com/ozandogrultan/opencode-ember/compare/v0.3.0...v0.3.1
 [0.3.0]: https://github.com/ozandogrultan/opencode-ember/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/ozandogrultan/opencode-ember/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/ozandogrultan/opencode-ember/releases/tag/v0.1.0
