@@ -20,7 +20,7 @@ the price arithmetic and safety rules are the original author's.
   links the CLI as `~/.local/bin/ember`.
 - `test/` — bun tests (`bun test`).
 - `tests/changelog.sh`, `scripts/changelog.sh` — release bookkeeping.
-- `CHANGELOG.md` — Keep a Changelog; `[Unreleased]` is the next release body.
+- `CHANGELOG.md` — Keep a Changelog; released versions only.
 
 ## Commands
 

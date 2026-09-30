@@ -17,20 +17,19 @@ From the Actions tab (**Release → Run workflow**) or:
 gh workflow run release.yml -f bump=patch   # or minor / major
 ```
 
-That workflow checks out `main`, bumps the version, promotes the `[Unreleased]`
-section, commits and tags it, pushes, publishes to npm, and cuts the GitHub
-release with the promoted notes.
+That workflow checks out `main`, bumps the version, writes a section from
+notable commits since the previous tag, commits and tags it, pushes, publishes
+to npm, and cuts the GitHub release with the new notes.
 
-Do this from a green `main` — it releases whatever is there. Keep
-[CHANGELOG.md](CHANGELOG.md) curated under `[Unreleased]`: the workflow refuses
-to release an empty section.
+Do this from a green `main` — it releases whatever is there. The workflow
+no-ops when no notable commits have landed since the last release.
 
 ## From a tag push
 
-If you prefer to bump locally, promote the changelog yourself first:
+If you prefer to bump locally, write the changelog section before tagging:
 
 ```bash
-bash scripts/changelog.sh promote 0.2.0   # [Unreleased] -> [0.2.0] - <today>
+bash scripts/changelog.sh release 0.2.0   # write [0.2.0] from commits
 npm version minor                          # patch / minor / major per the commit types
 git push --follow-tags                     # the tag push triggers the same release workflow
 ```
@@ -42,7 +41,7 @@ git push --follow-tags                     # the tag push triggers the same rele
 Pick the bump from [Conventional Commits](https://www.conventionalcommits.org/)
 since the last release — the highest impact wins: `feat` → minor,
 `fix`/`perf` → patch, `!`/`BREAKING CHANGE` → major. `scripts/changelog.sh draft`
-can seed entries from the commit log.
+previews the next version section from the commit log.
 
 ## One-time setup
 
