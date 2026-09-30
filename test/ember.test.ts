@@ -1,4 +1,4 @@
-import { describe, expect, it, beforeEach, afterEach } from "bun:test"
+import { describe, expect, it, beforeEach, afterEach, setSystemTime } from "bun:test"
 import { EmberPlugin, parseDuration } from "../ember"
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import { join } from "node:path"
@@ -329,5 +329,195 @@ describe("opencode-ember", () => {
     expect(store.sessions["proc-a"].deadline).toBeGreaterThan(
       Date.now() + 5 * 60 * 60 * 1000
     )
+  })
+
+  const captureTimers = () => {
+    const real = globalThis.setTimeout
+    const timers: Array<{ delay: number; fn: () => void }> = []
+    ;(globalThis as any).setTimeout = (fn: () => void, delay: number) => {
+      timers.push({ delay, fn })
+      return { unref() {} } as any
+    }
+    return { timers, restore: () => ((globalThis as any).setTimeout = real) }
+  }
+
+  const priorTurn = (minutesAgo: number) => ({
+    tui: { showToast: async () => {} },
+    session: {
+      messages: async () => ({
+        data: [
+          {
+            info: {
+              role: "assistant",
+              providerID: "anthropic",
+              modelID: "claude-sonnet-4-5-20250929",
+              tokens: { input: 1000, cache: { read: 60000, write: 0 } },
+              time: { completed: Date.now() - minutesAgo * 60 * 1000 },
+            },
+          },
+          { info: { role: "user", agent: "build", model: { providerID: "anthropic", modelID: "claude-sonnet-4-5-20250929" } } },
+        ],
+      }),
+    },
+  })
+
+  it("adopts a session that is only known from shared state when it goes idle", async () => {
+    writeFileSync(stateFile, JSON.stringify({
+      version: 2, guard: "warn", always: true,
+      sessions: { orphan: { deadline: Date.now() + 3 * 60 * 60 * 1000, every: 240000, ttl: 300000, continuous: true } },
+    }))
+    const clock = captureTimers()
+    const plugin = await EmberPlugin({ client: priorTurn(1) } as any)
+    try {
+      await plugin.event!({ event: { type: "session.idle", properties: { sessionID: "orphan" } } } as any)
+      expect(clock.timers.length).toBe(1)
+    } finally {
+      clock.restore()
+      await plugin.dispose!()
+    }
+  })
+
+  it("adopts the always setting another process changed", async () => {
+    writeFileSync(stateFile, JSON.stringify({ version: 2, guard: "warn", always: false, sessions: {} }))
+    const a = await EmberPlugin({ client: silentClient } as any)
+    const b = await EmberPlugin({ client: silentClient } as any)
+    try {
+      await expect(a["command.execute.before"]!(
+        { command: "keepwarm", sessionID: "a1", arguments: "always" }, { parts: [] } as any,
+      )).rejects.toThrow("keepwarm")
+      await b["chat.message"]!({ sessionID: "b1" }, { parts: [{ type: "text", text: "Hi" }] } as any)
+      const store = JSON.parse(readFileSync(stateFile, "utf8"))
+      expect(store.always).toBe(true)
+      expect(store.sessions.b1).toBeDefined()
+    } finally {
+      await a.dispose!()
+      await b.dispose!()
+    }
+  })
+
+  it("does not undo another process's /keepwarm off", async () => {
+    const a = await EmberPlugin({ client: silentClient } as any)
+    const b = await EmberPlugin({ client: silentClient } as any)
+    try {
+      await expect(a["command.execute.before"]!(
+        { command: "keepwarm", sessionID: "a1", arguments: "off" }, { parts: [] } as any,
+      )).rejects.toThrow("keepwarm")
+      await b["chat.message"]!({ sessionID: "b1" }, { parts: [{ type: "text", text: "Hi" }] } as any)
+      const store = JSON.parse(readFileSync(stateFile, "utf8"))
+      expect(store.always).toBe(false)
+      expect(store.sessions.b1).toBeUndefined()
+    } finally {
+      await a.dispose!()
+      await b.dispose!()
+    }
+  })
+
+  const pingClient = (turn: any, ping: { read: number; write: number }, calls: string[]) => ({
+    ...turn,
+    session: {
+      ...turn.session,
+      status: async () => ({ data: {} }),
+      fork: async () => {
+        calls.push("fork")
+        return { data: { id: "fork-1" } }
+      },
+      prompt: async () => ({
+        data: { info: { tokens: { input: 10, output: 5, cache: { read: ping.read, write: ping.write } } } },
+      }),
+      delete: async () => ({}),
+    },
+  })
+
+  const settle = () => new Promise((r) => setImmediate(r))
+
+  it("does not ping once the cache tier has lapsed while the timer slept", async () => {
+    const calls: string[] = []
+    const clock = captureTimers()
+    const plugin = await EmberPlugin({ client: pingClient(priorTurn(1), { read: 60000, write: 0 }, calls) } as any)
+    try {
+      await plugin["chat.message"]!({ sessionID: "slept" }, { parts: [{ type: "text", text: "Hi" }] } as any)
+      expect(clock.timers.length).toBe(1)
+      setSystemTime(new Date(Date.now() + 20 * 60 * 1000))
+      clock.timers[0].fn()
+      await settle()
+      expect(calls).toEqual([])
+    } finally {
+      setSystemTime()
+      clock.restore()
+      await plugin.dispose!()
+    }
+  })
+
+  it("does not read the uncached tail of the last reply as a lost cache", async () => {
+    const calls: string[] = []
+    const clock = captureTimers()
+    const plugin = await EmberPlugin({ client: pingClient(priorTurn(0), { read: 30000, write: 5100 }, calls) } as any)
+    try {
+      await plugin["chat.message"]!({ sessionID: "tail" }, { parts: [{ type: "text", text: "Hi" }] } as any)
+      await plugin.event!({
+        event: {
+          type: "message.part.updated",
+          properties: { part: { type: "step-finish", sessionID: "tail", tokens: { input: 1000, output: 5000, cache: { read: 30000, write: 0 } } } },
+        },
+      } as any)
+      clock.timers[0].fn()
+      await settle()
+      await settle()
+      expect(calls).toEqual(["fork"])
+      expect(JSON.parse(readFileSync(stateFile, "utf8")).sessions.tail).toBeDefined()
+    } finally {
+      clock.restore()
+      await plugin.dispose!()
+    }
+  })
+
+  it("keeps every session when several processes write the state file at once", async () => {
+    const script = join(tmpDir, "writer.ts")
+    writeFileSync(script, `
+      import { EmberPlugin } from ${JSON.stringify(join(import.meta.dir, "..", "ember"))}
+      const client = { tui: { showToast: async () => {} }, session: { messages: async () => ({ data: [] }) } }
+      const plugin = await EmberPlugin({ client } as any)
+      for (let i = 0; i < 15; i++)
+        await plugin["chat.message"]!({ sessionID: process.argv[2] + "-" + i }, { parts: [{ type: "text", text: "Hi" }] } as any)
+      await plugin.dispose!()
+    `)
+    const procs = ["a", "b", "c", "d", "e", "f"].map((id) =>
+      Bun.spawn(["bun", script, id], { env: { ...process.env, EMBER_STATE_FILE: stateFile }, stdout: "ignore", stderr: "ignore" }),
+    )
+    await Promise.all(procs.map((p) => p.exited))
+    expect(Object.keys(JSON.parse(readFileSync(stateFile, "utf8")).sessions).length).toBe(90)
+  })
+
+  it("does not arm subagent sessions", async () => {
+    const plugin = await EmberPlugin({ client: {
+      tui: { showToast: async () => {} },
+      session: {
+        get: async () => ({ data: { title: "explore", parentID: "root" } }),
+        messages: async () => { throw new Error("subagent session should not hydrate") },
+      },
+    } } as any)
+
+    await plugin["chat.message"]!({ sessionID: "child" }, { parts: [{ type: "text", text: "Search" }] } as any)
+    expect(existsSync(stateFile)).toBe(false)
+  })
+
+  it("does not adopt a persisted subagent session when it goes idle", async () => {
+    writeFileSync(stateFile, JSON.stringify({
+      version: 2, guard: "warn", always: true,
+      sessions: { child: { deadline: Date.now() + 3 * 60 * 60 * 1000, every: 240000, ttl: 300000, continuous: true } },
+    }))
+    const clock = captureTimers()
+    const plugin = await EmberPlugin({ client: {
+      ...priorTurn(1),
+      session: { ...priorTurn(1).session, get: async () => ({ data: { parentID: "root" } }) },
+    } } as any)
+    try {
+      await plugin.event!({ event: { type: "session.idle", properties: { sessionID: "child" } } } as any)
+      expect(clock.timers.length).toBe(0)
+      expect(JSON.parse(readFileSync(stateFile, "utf8")).sessions.child).toBeUndefined()
+    } finally {
+      clock.restore()
+      await plugin.dispose!()
+    }
   })
 })

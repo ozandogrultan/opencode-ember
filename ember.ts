@@ -1,5 +1,5 @@
 import type { Plugin } from "@opencode-ai/plugin"
-import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs"
+import { mkdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs"
 import { homedir } from "node:os"
 import { dirname, join } from "node:path"
 
@@ -126,6 +126,7 @@ type Session = {
   pinging: boolean
   timer: ReturnType<typeof setTimeout> | null
   stumble: number
+  tail: number
 }
 
 type Store = {
@@ -226,28 +227,53 @@ function readStore(): Store {
   }
 }
 
-function writeStore(current: Store, apply?: (fresh: Store) => void): void {
+function withLock(file: string, fn: () => void): void {
+  const lock = file + ".lock"
+  const giveUpAt = Date.now() + 2000
+  let held = false
+  for (;;) {
+    try {
+      mkdirSync(lock)
+      held = true
+      break
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "EEXIST") break
+      try {
+        if (Date.now() - statSync(lock).mtimeMs > 5000) rmSync(lock, { recursive: true, force: true })
+      } catch {}
+      if (Date.now() > giveUpAt) break
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 5)
+    }
+  }
   try {
-    // Several opencode processes may share one state file (cmux spawns one
-    // per workspace). Re-read and merge instead of writing the possibly
-    // stale in-memory snapshot, or windows armed elsewhere get dropped.
-    const fresh = readStore()
-    fresh.always = current.always
-    fresh.guard = current.guard
-    const now = Date.now()
-    for (const [id, entry] of Object.entries(fresh.sessions)) {
-      if (now - entry.deadline > STALE_MS) delete fresh.sessions[id]
-    }
-    const dayKeys = Object.keys(fresh.days).sort()
-    while (dayKeys.length > GAIN_RETENTION_DAYS) {
-      delete fresh.days[dayKeys.shift()!]
-    }
-    apply?.(fresh)
+    fn()
+  } finally {
+    if (held) rmSync(lock, { recursive: true, force: true })
+  }
+}
+
+function writeStore(apply?: (fresh: Store) => void): void {
+  try {
     const file = stateFilePath()
     mkdirSync(dirname(file), { recursive: true })
-    const tmp = file + ".tmp"
-    writeFileSync(tmp, JSON.stringify(fresh, null, 2))
-    renameSync(tmp, file)
+    withLock(file, () => {
+      // Several opencode processes may share one state file (cmux spawns one
+      // per workspace). Re-read and merge under a lock instead of writing the
+      // possibly stale in-memory snapshot, or windows armed elsewhere get dropped.
+      const fresh = readStore()
+      const now = Date.now()
+      for (const [id, entry] of Object.entries(fresh.sessions)) {
+        if (now - entry.deadline > STALE_MS) delete fresh.sessions[id]
+      }
+      const dayKeys = Object.keys(fresh.days).sort()
+      while (dayKeys.length > GAIN_RETENTION_DAYS) {
+        delete fresh.days[dayKeys.shift()!]
+      }
+      apply?.(fresh)
+      const tmp = `${file}.${process.pid}.tmp`
+      writeFileSync(tmp, JSON.stringify(fresh, null, 2))
+      renameSync(tmp, file)
+    })
   } catch {
     // a failed write only costs us a restored window, never the conversation
   }
@@ -286,13 +312,20 @@ export const EmberPlugin: Plugin = async ({ client }) => {
       pinging: false,
       timer: null,
       stumble: 0,
+      tail: 0,
     }
     sessions.set(id, s)
     return s
   }
 
+  const refreshSettings = () => {
+    const fresh = readStore()
+    store.always = fresh.always
+    store.guard = fresh.guard
+  }
+
   const persistSession = (s: Session) => {
-    writeStore(store, (fresh) => {
+    writeStore((fresh) => {
       if (s.deadline) fresh.sessions[s.id] = { deadline: s.deadline, every: s.every, ttl: s.ttl, continuous: s.continuous }
       else delete fresh.sessions[s.id]
     })
@@ -301,7 +334,7 @@ export const EmberPlugin: Plugin = async ({ client }) => {
   // Increment a today-bucket for /ember gain. Reads the file fresh via
   // writeStore, so days recorded by other processes are preserved.
   const recordHistory = (apply: (d: Day) => void) => {
-    writeStore(store, (fresh) => {
+    writeStore((fresh) => {
       const key = new Date().toISOString().slice(0, 10)
       const day = fresh.days[key] ?? { pings: 0, read: 0, pingUsd: 0, keptUsd: 0, colds: 0, coldUsd: 0, warmMs: 0 }
       apply(day)
@@ -368,6 +401,7 @@ export const EmberPlugin: Plugin = async ({ client }) => {
       s.deadline = Date.now() + DEFAULT_WINDOW_MS
       persistSession(s)
     }
+    if (s.lastRequestAt && Date.now() >= s.lastRequestAt + s.ttl) return clearTimer(s)
     if (!s.lastModel) return stop(s, "no model seen yet for this session")
     s.pinging = true
     let forkID: string | null = null
@@ -404,7 +438,7 @@ export const EmberPlugin: Plugin = async ({ client }) => {
       const usd = price
         ? (read * price[0] + write * price[1] + tokens.input * (price[1] / 2) + tokens.output * price[2]) / 1e6
         : null
-      const warm = read > 0 && write < Math.max(1000, read / 10)
+      const warm = read > 0 && write < Math.max(1000, read / 10) + s.tail
       const silent = read === 0 && write === 0
       s.lastPing = { at: Date.now(), read, write, usd, warm }
 
@@ -437,6 +471,7 @@ export const EmberPlugin: Plugin = async ({ client }) => {
       }
 
       s.stumble = 0
+      s.tail = 0
 
       // The ping refreshed the shared prefix, so the TTL now runs from here.
       // No toast on success: pings fire every few minutes and would spam
@@ -538,6 +573,7 @@ export const EmberPlugin: Plugin = async ({ client }) => {
         if (info.error || !info.tokens || (info.tokens.input === 0 && info.tokens.cache.read === 0 && info.tokens.cache.write === 0)) continue
         s.lastModel = { providerID: info.providerID, modelID: info.modelID }
         s.ctx = info.tokens.input + info.tokens.cache.read + info.tokens.cache.write
+        s.tail = info.tokens.output + (info.tokens.reasoning ?? 0)
         s.lastRequestAt = info.time.completed ?? info.time.created
         break
       }
@@ -569,6 +605,7 @@ export const EmberPlugin: Plugin = async ({ client }) => {
   }
 
   const handleCommand = (sessionID: string, raw: string): { text: string; keepwarm: boolean } => {
+    refreshSettings()
     const s = state(sessionID)
     const args = raw.trim()
     const [head, ...rest] = args.split(/\s+/)
@@ -580,12 +617,17 @@ export const EmberPlugin: Plugin = async ({ client }) => {
       stop(s, null)
       s.stopped = null
       store.always = false
-      persistSession(s)
+      writeStore((fresh) => {
+        fresh.always = false
+      })
       return { text: "keepwarm off · always off", keepwarm: true }
     }
 
     if (sub === "always") {
       store.always = true
+      writeStore((fresh) => {
+        fresh.always = true
+      })
       arm(s, DEFAULT_WINDOW_MS, undefined, true)
       return { text: "keepwarm always on for this and future sessions", keepwarm: true }
     }
@@ -657,7 +699,9 @@ export const EmberPlugin: Plugin = async ({ client }) => {
           const mode = parts[1]?.toLowerCase()
           if (mode === "warn" || mode === "refuse" || mode === "block") {
             store.guard = mode === "block" ? "refuse" : (mode as GuardMode)
-            writeStore(store)
+            writeStore((fresh) => {
+              fresh.guard = store.guard
+            })
             message = `ember guard ${store.guard}`
           } else {
             message = "usage: /ember guard warn|refuse"
@@ -684,11 +728,12 @@ export const EmberPlugin: Plugin = async ({ client }) => {
         const session = client.session.get
           ? await client.session.get({ path: { id: input.sessionID } }).catch(() => undefined)
           : undefined
-        if (session?.data?.title === "ghost-hidden") {
+        if (session?.data?.title === "ghost-hidden" || session?.data?.parentID) {
           helperSessions.add(input.sessionID)
           return
         }
       }
+      refreshSettings()
       const s = state(input.sessionID)
       const text = textOf(output.parts)
       if (text.startsWith("/")) return
@@ -744,6 +789,7 @@ export const EmberPlugin: Plugin = async ({ client }) => {
             s.compacted = false
             s.lastRequestAt = Date.now()
             s.ctx = part.tokens.input + part.tokens.cache.read + part.tokens.cache.write
+            s.tail = part.tokens.output + (part.tokens.reasoning ?? 0)
             if (s.pendingColdWrite) {
               if (part.tokens.cache.write > 0) {
                 const price = priceOf(s.lastModel)
@@ -760,8 +806,25 @@ export const EmberPlugin: Plugin = async ({ client }) => {
             break
           }
           case "session.idle": {
-            const s = sessions.get(event.properties.sessionID)
-            if (!s || !s.deadline || s.stopped) break
+            const id = event.properties.sessionID
+            let s = sessions.get(id)
+            if (!s) {
+              if (helperSessions.has(id)) break
+              const persisted = readStore().sessions[id]
+              if (!persisted) break
+              const info = client.session.get ? await client.session.get({ path: { id } }).catch(() => undefined) : undefined
+              if (info?.data?.parentID) {
+                helperSessions.add(id)
+                writeStore((fresh) => {
+                  delete fresh.sessions[id]
+                })
+                break
+              }
+              store.sessions[id] = persisted
+              s = state(id)
+              await hydrate(s)
+            }
+            if (!s.deadline || s.stopped) break
             schedule(s)
             break
           }
@@ -792,7 +855,7 @@ export const EmberPlugin: Plugin = async ({ client }) => {
             if (!s) break
             clearTimer(s)
             sessions.delete(s.id)
-            writeStore(store, (fresh) => {
+            writeStore((fresh) => {
               delete fresh.sessions[s.id]
             })
             break

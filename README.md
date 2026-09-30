@@ -13,7 +13,7 @@ dependencies.
 
 ## What it does
 
-- **The cache stays warm by default.** Every session stays armed while opencode runs;
+- **The cache stays warm by default.** Every top-level session (not subagent sessions) stays armed while opencode runs;
   after the cache tier has almost lapsed, the plugin sends one request over a
   **fork** of the session. The fork shares the session's model, agent, tools and
   system prompt, so its prefix is byte-identical and only appends: the provider

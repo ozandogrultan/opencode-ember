@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- Adopt the always-on and guard settings changed by another opencode process instead of overwriting them from a stale snapshot
+- Resume warming for a session armed in the shared state file when it goes idle in a process that has not seen a message for it
+- Skip a ping whose timer fired after the cache tier lapsed (sleep, suspend) instead of cold-writing the fork and stopping
+- Count the last reply's uncached output as expected on the first ping, so a long final answer on a small context no longer reads as a lost cache
+- Stop arming and pinging subagent (child) sessions
+- Serialize state-file writes with a lock so concurrent opencode processes no longer lose each other's sessions
+
 ## [0.3.0] - 2026-09-25
 
 ### Added
