@@ -405,6 +405,9 @@ export const EmberPlugin: Plugin = async ({ client }) => {
     if (!s.lastModel) return stop(s, "no model seen yet for this session")
     s.pinging = true
     let forkID: string | null = null
+    const markerDir = process.env.OPENCODE_GHOST_MARKER_DIR || join(homedir(), ".cache", "opencode-ghost")
+    const pendingMarker = join(markerDir, "pending")
+    let markerFile: string | null = null
     try {
       const status = await client.session.status().catch(() => undefined)
       if (status?.data?.[s.id]?.type === "busy") {
@@ -414,10 +417,23 @@ export const EmberPlugin: Plugin = async ({ client }) => {
         return
       }
 
+      try {
+        mkdirSync(markerDir, { recursive: true })
+        writeFileSync(pendingMarker, "")
+      } catch {}
+
       const forked = await client.session.fork({ path: { id: s.id } })
       forkID = forked.data?.id ?? null
       if (!forkID) throw new Error("fork failed")
       pingForks.add(forkID)
+      markerFile = join(markerDir, `id-${forkID}`)
+      try {
+        writeFileSync(markerFile, JSON.stringify({ pid: process.pid }))
+        rmSync(pendingMarker, { force: true })
+      } catch {}
+      if (client.session.update) {
+        await client.session.update({ path: { id: forkID }, body: { title: "ghost-hidden" } }).catch(() => undefined)
+      }
 
       const answer = await client.session.prompt({
         path: { id: forkID },
@@ -502,6 +518,14 @@ export const EmberPlugin: Plugin = async ({ client }) => {
     } finally {
       if (forkID) pingForks.delete(forkID)
       if (forkID) await client.session.delete({ path: { id: forkID } }).catch(() => undefined)
+      if (markerFile) {
+        try {
+          rmSync(markerFile, { force: true })
+        } catch {}
+      }
+      try {
+        rmSync(pendingMarker, { force: true })
+      } catch {}
       s.pinging = false
     }
   }

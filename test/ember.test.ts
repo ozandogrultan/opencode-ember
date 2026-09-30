@@ -520,4 +520,53 @@ describe("opencode-ember", () => {
       await plugin.dispose!()
     }
   })
+
+  it("marks and titles the ping fork as hidden to suppress external notifications", async () => {
+    const markerDir = mkdtempSync(join(tmpdir(), "ember-ghost-"))
+    process.env.OPENCODE_GHOST_MARKER_DIR = markerDir
+    const calls: string[] = []
+    let updatedTitle: string | undefined
+    let markerExistedDuringPrompt = false
+
+    const client = {
+      ...priorTurn(1),
+      session: {
+        ...priorTurn(1).session,
+        status: async () => ({ data: {} }),
+        fork: async () => {
+          calls.push("fork")
+          return { data: { id: "fork-silent" } }
+        },
+        update: async (opts: any) => {
+          updatedTitle = opts.body?.title
+        },
+        prompt: async () => {
+          markerExistedDuringPrompt = existsSync(join(markerDir, "id-fork-silent"))
+          return { data: { info: { tokens: { input: 10, output: 5, cache: { read: 60000, write: 0 } } } } }
+        },
+        delete: async () => {
+          calls.push("delete")
+        },
+      },
+    }
+
+    const clock = captureTimers()
+    const plugin = await EmberPlugin({ client } as any)
+    try {
+      await plugin["chat.message"]!({ sessionID: "quiet" }, { parts: [{ type: "text", text: "Hi" }] } as any)
+      clock.timers[0].fn()
+      await settle()
+      await settle()
+      expect(calls).toEqual(["fork", "delete"])
+      expect(updatedTitle).toBe("ghost-hidden")
+      expect(markerExistedDuringPrompt).toBe(true)
+      expect(existsSync(join(markerDir, "id-fork-silent"))).toBe(false)
+      expect(existsSync(join(markerDir, "pending"))).toBe(false)
+    } finally {
+      delete process.env.OPENCODE_GHOST_MARKER_DIR
+      rmSync(markerDir, { recursive: true, force: true })
+      clock.restore()
+      await plugin.dispose!()
+    }
+  })
 })
