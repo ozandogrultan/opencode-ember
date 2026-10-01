@@ -412,21 +412,31 @@ describe("opencode-ember", () => {
     }
   })
 
-  const pingClient = (turn: any, ping: { read: number; write: number }, calls: string[]) => ({
-    ...turn,
-    session: {
-      ...turn.session,
-      status: async () => ({ data: {} }),
-      fork: async () => {
-        calls.push("fork")
-        return { data: { id: "fork-1" } }
+  const pingClient = (turn: any, ping: { read: number; write: number }, calls: string[]) => {
+    let initialized = false
+    return {
+      ...turn,
+      session: {
+        ...turn.session,
+        status: async () => ({ data: {} }),
+        get: async (opts: any) => {
+          if (initialized) {
+            calls.push("heartbeat")
+          }
+          initialized = true
+          return { data: { id: opts?.path?.id ?? "test" } }
+        },
+        fork: async () => {
+          calls.push("fork")
+          return { data: { id: "fork-1" } }
+        },
+        prompt: async () => ({
+          data: { info: { tokens: { input: 10, output: 5, cache: { read: ping.read, write: ping.write } } } },
+        }),
+        delete: async () => ({}),
       },
-      prompt: async () => ({
-        data: { info: { tokens: { input: 10, output: 5, cache: { read: ping.read, write: ping.write } } } },
-      }),
-      delete: async () => ({}),
-    },
-  })
+    }
+  }
 
   const settle = () => new Promise((r) => setImmediate(r))
 
@@ -463,7 +473,8 @@ describe("opencode-ember", () => {
       clock.timers[0].fn()
       await settle()
       await settle()
-      expect(calls).toEqual(["fork"])
+      expect(calls).toEqual(["heartbeat"])
+      expect(calls).not.toContain("fork")
       expect(JSON.parse(readFileSync(stateFile, "utf8")).sessions.tail).toBeDefined()
     } finally {
       clock.restore()
@@ -486,7 +497,8 @@ describe("opencode-ember", () => {
       clock.timers[0].fn()
       await settle()
       await settle()
-      expect(calls).toEqual(["fork"])
+      expect(calls).toEqual(["heartbeat"])
+      expect(calls).not.toContain("fork")
       expect(JSON.parse(readFileSync(stateFile, "utf8")).sessions.partial).toBeDefined()
     } finally {
       clock.restore()
@@ -563,31 +575,28 @@ describe("opencode-ember", () => {
     }
   })
 
-  it("marks and titles the ping fork as hidden to suppress external notifications", async () => {
-    const markerDir = mkdtempSync(join(tmpdir(), "ember-ghost-"))
-    process.env.OPENCODE_GHOST_MARKER_DIR = markerDir
+  it("never forks a session during keepalive and keeps it fresh for free", async () => {
     const calls: string[] = []
-    let updatedTitle: string | undefined
-    let markerExistedDuringPrompt = false
-
+    let initialized = false
     const client = {
       ...priorTurn(1),
       session: {
         ...priorTurn(1).session,
         status: async () => ({ data: {} }),
+        get: async (opts: any) => {
+          if (initialized) {
+            calls.push("heartbeat")
+          }
+          initialized = true
+          return { data: { id: opts?.path?.id } }
+        },
         fork: async () => {
           calls.push("fork")
-          return { data: { id: "fork-silent" } }
-        },
-        update: async (opts: any) => {
-          updatedTitle = opts.body?.title
+          return { data: { id: "fork-never" } }
         },
         prompt: async () => {
-          markerExistedDuringPrompt = existsSync(join(markerDir, "id-fork-silent"))
+          calls.push("prompt")
           return { data: { info: { tokens: { input: 10, output: 5, cache: { read: 60000, write: 0 } } } } }
-        },
-        delete: async () => {
-          calls.push("delete")
         },
       },
     }
@@ -599,14 +608,10 @@ describe("opencode-ember", () => {
       clock.timers[0].fn()
       await settle()
       await settle()
-      expect(calls).toEqual(["fork", "delete"])
-      expect(updatedTitle).toBe("ghost-hidden")
-      expect(markerExistedDuringPrompt).toBe(true)
-      expect(existsSync(join(markerDir, "id-fork-silent"))).toBe(false)
-      expect(existsSync(join(markerDir, "pending"))).toBe(false)
+      expect(calls).toEqual(["heartbeat"])
+      expect(calls).not.toContain("fork")
+      expect(calls).not.toContain("prompt")
     } finally {
-      delete process.env.OPENCODE_GHOST_MARKER_DIR
-      rmSync(markerDir, { recursive: true, force: true })
       clock.restore()
       await plugin.dispose!()
     }

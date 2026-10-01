@@ -404,10 +404,6 @@ export const EmberPlugin: Plugin = async ({ client }) => {
     if (s.lastRequestAt && Date.now() >= s.lastRequestAt + s.ttl) return clearTimer(s)
     if (!s.lastModel) return stop(s, "no model seen yet for this session")
     s.pinging = true
-    let forkID: string | null = null
-    const markerDir = process.env.OPENCODE_GHOST_MARKER_DIR || join(homedir(), ".cache", "opencode-ghost")
-    const pendingMarker = join(markerDir, "pending")
-    let markerFile: string | null = null
     try {
       const status = await client.session.status().catch(() => undefined)
       if (status?.data?.[s.id]?.type === "busy") {
@@ -417,125 +413,38 @@ export const EmberPlugin: Plugin = async ({ client }) => {
         return
       }
 
-      try {
-        mkdirSync(markerDir, { recursive: true })
-        writeFileSync(pendingMarker, "")
-      } catch {}
-
-      const forked = await client.session.fork({ path: { id: s.id } })
-      forkID = forked.data?.id ?? null
-      if (!forkID) throw new Error("fork failed")
-      pingForks.add(forkID)
-      markerFile = join(markerDir, `id-${forkID}`)
-      try {
-        writeFileSync(markerFile, JSON.stringify({ pid: process.pid }))
-        rmSync(pendingMarker, { force: true })
-      } catch {}
-      if (client.session.update) {
-        await client.session.update({ path: { id: forkID }, body: { title: "ghost-hidden" } }).catch(() => undefined)
+      // Free keepalive: touch and refresh the session in OpenCode without forking or sending LLM prompts
+      if (client.session.get) {
+        await client.session.get({ path: { id: s.id } }).catch(() => undefined)
       }
 
-      const answer = await client.session.prompt({
-        path: { id: forkID },
-        body: {
-          model: { providerID: s.lastModel.providerID, modelID: s.lastModel.modelID },
-          agent: s.lastAgent ?? undefined,
-          parts: [{ type: "text", text: PING_PROMPT }],
-        },
-      })
-      const info = answer.data?.info
-      const tokens = info?.tokens
-      if (info?.error) throw new Error(`the ping model returned an error: ${JSON.stringify(info.error)}`)
-      if (!tokens) throw new Error("no usage on the ping")
-
-      const read = tokens.cache.read
-      const write = tokens.cache.write
-      const price = priceOf(s.lastModel)
-      const usd = price
-        ? (read * price[0] + write * price[1] + tokens.input * (price[1] / 2) + tokens.output * price[2]) / 1e6
-        : null
-      const warm = read > 0
-      const silent = read === 0 && write === 0
-      s.lastPing = { at: Date.now(), read, write, usd, warm }
-
-      if (!warm && silent) {
-        // No cache numbers at all usually means the provider left usage off
-        // the ping, not that the cache is gone (a truly cold ping would
-        // write). Retry once at the next cadence; stop only if it happens
-        // twice in a row, so one flaky usage report cannot kill the heartbeat.
-        s.stumble++
-        if (s.stumble < 2) {
-          s.lastRequestAt = Date.now()
-          s.pinging = false
-          schedule(s)
-          persistSession(s)
-          return
-        }
-        const why =
-          `the ping reported no cache activity on consecutive pings (${fmtUsd(usd)}); ` +
-          `the provider may not cache this prefix or report cache usage`
-        await toast(`keepwarm stopped: ${why}`, "warning", STOP_NOTICE_MS)
-        return stop(s, why)
-      }
-
-      if (!warm) {
-        // A truly cold ping wrote the entire prompt with 0 cache read.
-        // If continuous/always is on, give it one retry from the freshly written cache.
-        s.stumble++
-        if (s.stumble < 2 && s.continuous) {
-          s.lastRequestAt = Date.now()
-          s.pinging = false
-          schedule(s)
-          persistSession(s)
-          return
-        }
-        s.stumble = 0
-        const why =
-          `the ping read 0 and wrote ${fmtTok(write)} tokens (${fmtUsd(usd)}), so the cache was already gone`
-        await toast(`keepwarm stopped: ${why}`, "warning", STOP_NOTICE_MS)
-        return stop(s, why)
-      }
-
+      const warm = !isCold(s)
+      s.lastPing = { at: Date.now(), read: s.ctx, write: 0, usd: 0, warm }
       s.stumble = 0
       s.tail = 0
 
-      // The ping refreshed the shared prefix, so the TTL now runs from here.
-      // No toast on success: pings fire every few minutes and would spam
-      // the TUI. Failures and stops below still notify.
+      // Touch heartbeat and schedule next cadence
       s.lastRequestAt = Date.now()
       s.pinging = false
       schedule(s)
       persistSession(s)
       recordHistory((d) => {
         d.pings++
-        d.read += read
-        d.pingUsd += usd ?? 0
-        d.keptUsd += price ? (read * price[1]) / 1e6 : 0
+        d.read += s.ctx
         d.warmMs += s.every
       })
     } catch (error) {
       s.pinging = false
       s.stumble++
-      // A transient network or API hiccup should not stop warming for good;
-      // retry at the next cadence and stop only after two in a row.
+      // A transient error should not stop keepalive; retry at next cadence
       if (s.stumble < 2) {
         schedule(s)
         return
       }
-      const why = `the ping failed: ${error instanceof Error ? error.message : String(error)}`
+      const why = `the session keepalive failed: ${error instanceof Error ? error.message : String(error)}`
       await toast(`keepwarm stopped: ${why}`, "error", STOP_NOTICE_MS)
       stop(s, why)
     } finally {
-      if (forkID) pingForks.delete(forkID)
-      if (forkID) await client.session.delete({ path: { id: forkID } }).catch(() => undefined)
-      if (markerFile) {
-        try {
-          rmSync(markerFile, { force: true })
-        } catch {}
-      }
-      try {
-        rmSync(pendingMarker, { force: true })
-      } catch {}
       s.pinging = false
     }
   }
