@@ -471,6 +471,48 @@ describe("opencode-ember", () => {
     }
   })
 
+  it("keeps warming on partial cache hits where write exceeds read / 10", async () => {
+    const calls: string[] = []
+    const clock = captureTimers()
+    const plugin = await EmberPlugin({ client: pingClient(priorTurn(0), { read: 31450, write: 167677 }, calls) } as any)
+    try {
+      await plugin["chat.message"]!({ sessionID: "partial" }, { parts: [{ type: "text", text: "Hi" }] } as any)
+      await plugin.event!({
+        event: {
+          type: "message.part.updated",
+          properties: { part: { type: "step-finish", sessionID: "partial", tokens: { input: 4, output: 1000, cache: { read: 31450, write: 167677 } } } },
+        },
+      } as any)
+      clock.timers[0].fn()
+      await settle()
+      await settle()
+      expect(calls).toEqual(["fork"])
+      expect(JSON.parse(readFileSync(stateFile, "utf8")).sessions.partial).toBeDefined()
+    } finally {
+      clock.restore()
+      await plugin.dispose!()
+    }
+  })
+
+  it("re-arms an idle session when always is enabled even if it was previously stopped", async () => {
+    writeFileSync(stateFile, JSON.stringify({
+      version: 2, guard: "warn", always: true,
+      sessions: {},
+    }))
+    const clock = captureTimers()
+    const plugin = await EmberPlugin({ client: priorTurn(1) } as any)
+    try {
+      await plugin.event!({ event: { type: "session.idle", properties: { sessionID: "idle-always" } } } as any)
+      expect(clock.timers.length).toBe(1)
+      const store = JSON.parse(readFileSync(stateFile, "utf8"))
+      expect(store.sessions["idle-always"]).toBeDefined()
+      expect(store.sessions["idle-always"].continuous).toBe(true)
+    } finally {
+      clock.restore()
+      await plugin.dispose!()
+    }
+  })
+
   it("keeps every session when several processes write the state file at once", async () => {
     const script = join(tmpDir, "writer.ts")
     writeFileSync(script, `

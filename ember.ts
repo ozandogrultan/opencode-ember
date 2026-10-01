@@ -454,7 +454,7 @@ export const EmberPlugin: Plugin = async ({ client }) => {
       const usd = price
         ? (read * price[0] + write * price[1] + tokens.input * (price[1] / 2) + tokens.output * price[2]) / 1e6
         : null
-      const warm = read > 0 && write < Math.max(1000, read / 10) + s.tail
+      const warm = read > 0
       const silent = read === 0 && write === 0
       s.lastPing = { at: Date.now(), read, write, usd, warm }
 
@@ -479,9 +479,19 @@ export const EmberPlugin: Plugin = async ({ client }) => {
       }
 
       if (!warm) {
+        // A truly cold ping wrote the entire prompt with 0 cache read.
+        // If continuous/always is on, give it one retry from the freshly written cache.
+        s.stumble++
+        if (s.stumble < 2 && s.continuous) {
+          s.lastRequestAt = Date.now()
+          s.pinging = false
+          schedule(s)
+          persistSession(s)
+          return
+        }
         s.stumble = 0
         const why =
-          `the ping read ${read} and wrote ${fmtTok(write)} tokens (${fmtUsd(usd)}), so the cache was already gone`
+          `the ping read 0 and wrote ${fmtTok(write)} tokens (${fmtUsd(usd)}), so the cache was already gone`
         await toast(`keepwarm stopped: ${why}`, "warning", STOP_NOTICE_MS)
         return stop(s, why)
       }
@@ -814,6 +824,8 @@ export const EmberPlugin: Plugin = async ({ client }) => {
             s.lastRequestAt = Date.now()
             s.ctx = part.tokens.input + part.tokens.cache.read + part.tokens.cache.write
             s.tail = part.tokens.output + (part.tokens.reasoning ?? 0)
+            s.stopped = null
+            if (store.always && !s.deadline) arm(s, AUTO_WARM_MS, undefined, true)
             if (s.pendingColdWrite) {
               if (part.tokens.cache.write > 0) {
                 const price = priceOf(s.lastModel)
@@ -835,7 +847,7 @@ export const EmberPlugin: Plugin = async ({ client }) => {
             if (!s) {
               if (helperSessions.has(id)) break
               const persisted = readStore().sessions[id]
-              if (!persisted) break
+              if (!persisted && !store.always) break
               const info = client.session.get ? await client.session.get({ path: { id } }).catch(() => undefined) : undefined
               if (info?.data?.parentID) {
                 helperSessions.add(id)
@@ -844,12 +856,16 @@ export const EmberPlugin: Plugin = async ({ client }) => {
                 })
                 break
               }
-              store.sessions[id] = persisted
+              if (persisted) store.sessions[id] = persisted
               s = state(id)
               await hydrate(s)
             }
-            if (!s.deadline || s.stopped) break
-            schedule(s)
+            if (store.always && (!s.deadline || s.stopped)) {
+              arm(s, AUTO_WARM_MS, undefined, true)
+            } else {
+              if (!s.deadline || s.stopped) break
+              schedule(s)
+            }
             break
           }
           case "session.compacted": {
