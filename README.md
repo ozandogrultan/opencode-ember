@@ -13,13 +13,10 @@ dependencies.
 
 ## What it does
 
-- **The cache stays warm by default.** Every top-level session (not subagent sessions) stays armed while opencode runs;
-  after the cache tier has almost lapsed, the plugin sends one request over a
-  **fork** of the session. The fork shares the session's model, agent, tools and
-  system prompt, so its prefix is byte-identical and only appends: the provider
-  answers from cache and the TTL refreshes. No heartbeat messages ever enter the
-  real conversation. `/keepwarm off` stops it for the session and turns the
-  default off.
+- **Keepwarm is opt-in, fail-closed, and never mutates sessions or provider config.**
+  The plugin never forks, prompts, deletes, or appends to a session for background warming,
+  and never wraps provider `options.fetch`. Background warming fails closed with
+  `"no supported captured model request is available"` and never issues background provider requests.
 - **`/ember guard warn` (default) shows the price and sends anyway.** When the TTL has
   lapsed and the context is large, a graceful warning is shown while the message sends.
   `/ember guard refuse` hard blocks cold sends and shows an informative error in the turn,
@@ -60,7 +57,7 @@ shell. It requires [`bun`](https://bun.sh) on PATH; an alternative is
 `/ember gain` inside opencode tells you to use the binary instead.
 
 `install.sh` asks opencode for its own config directory (`opencode debug paths`)
-and copies `ember.ts` into `<config>/plugins/`, backing up any existing file.
+and copies `ember.ts` into `<config>/plugins/`, overwriting any existing file.
 
 ### Manually
 
@@ -87,24 +84,20 @@ ember gain | discover [--json]     # the report, from any shell
 
 | command | effect |
 | --- | --- |
-| `/keepwarm` | refresh always-on warming (or arm six hours if the default is off) |
+| `/keepwarm` | arm warming for a 30-minute window (default cadence ~4m) |
 | `/keepwarm 90m` | a window of your own (`2h30m`, `6h`, …) |
-| `/keepwarm always` | keep this and future sessions armed until closed (already the default) |
+| `/keepwarm always` | keep this and future sessions armed across breaks (30m idle window per turn) |
 | `/keepwarm 6h every 2m` | override the ping period (floor 1m) |
 | `/keepwarm 6h ttl 1h` | assume the 1-hour cache tier |
 | `/keepwarm status` | the status line |
-| `/keepwarm off` | stop, forget the window, turn the default off |
+| `/keepwarm off` | stop, forget the window, turn always off |
 | `/ember` | the card |
 | `/ember guard warn` | show the price and send (default) |
 | `/ember guard refuse` | hard block cold sends |
 | `ember gain` | terminal report over collected history (alias `ember discover`) |
 
-Warming belongs to each session. By default it renews as long as opencode is
-running; explicitly timed windows end after their duration. A second session
-gets its own timer, and a resumed session restores its setting. A session
-resumed after the cache tier already expired cannot be rescued retroactively:
-its first turn is cold by definition, and warming resumes from that point. Run
-`/keepwarm off` to disable the default and warm only on request.
+Keepwarm is disabled by default and requires explicit opt-in (`/keepwarm` or
+`/keepwarm always`). It warms only after an eligible normal request is captured in memory.
 
 ## The 5-minute tier (read this)
 
@@ -117,24 +110,25 @@ Economically that matters: on a 200k-token context a cache read is ~$0.05 and a
 cold write ~$4, so ~80 pings cost one cold write. Warm a one-hour break and you
 win; warm a whole working day on the 5-minute tier and you are near break-even.
 
-Always-on warming can keep paying for cache reads beyond six hours while the
-session remains open. Turn it off with `/keepwarm off` or use an explicit
-duration if you would rather bound the cost per session.
+Warming is bounded by the active 30-minute window measured from the latest
+non-warming request. Continuous warming (`/keepwarm always`) rearms on subsequent
+normal model turns rather than running perpetually while idle; once the 30-minute
+idle window lapses, warming stops. Turn it off anytime with `/keepwarm off`.
 
-## It will not invalidate your cache
+## Safe warming status
 
-- Pings reuse the session's **exact** model, agent, tools and system prompt and
-  send a constant one-line prompt. They only append.
-- After every ping the plugin checks the usage: if it wrote at least a tenth of
-  what it read, it concludes the cache was already gone and **stops itself**
-  rather than hammering a cold cache. A ping that reports no cache numbers at
-  all is treated as inconclusive instead: it retries once and stops only after
-  two consecutive zero-activity readbacks, so one flaky usage report cannot
-  kill the heartbeat. A transient ping error also retries once before stopping.
-- Pings only run while the last request is still inside the cache tier. A
-  session resumed after the tier expired (process restart, sleep, long break)
-  waits for your next turn instead of cold-rewriting the fork itself.
-- An explicitly timed window expires without editing or clearing the session.
+The plugin never forks, prompts, deletes, or appends to a session for background
+warming, and never mutates `config.provider` or provider `options.fetch`.
+Background warming fails closed with `"no supported captured model request is available"`
+and never issues background provider requests or forked sessions.
+
+Important safety guarantees:
+- **Zero background provider requests:** Background warming fails closed immediately;
+  it never sends provider calls, consumes model quota, or triggers provider authentication loops.
+- **No session mutation:** Real session history and parent/child topologies are never altered.
+- **Accurate accounting:** Dollar rates are based on actual turns; no synthetic
+  heartbeats or tokens are recorded for failed or unsupported background requests.
+- **In-memory state hygiene:** No credentials, request headers, or prompts are written to disk.
 
 ## Configuration
 
@@ -151,24 +145,24 @@ read, cache write and output rates per model family). Two consequences:
 
 - **Every figure is an estimate.** Prices are hard-coded list rates for the
   Anthropic/OpenAI families the plugin knows; they do not follow your provider,
-  plan, negotiated rates, or prompt-fee changes. Treat every dollar value in
-  `/ember` and `/ember gain` as an approximation, not an invoice.
+  plan, negotiated rates, or prompt-fee changes. Uncached input tokens use the
+  write rate estimate (`price[1]`), cached tokens use the read rate (`price[0]`),
+  and output tokens use `price[2]`. Treat every dollar value in `/ember` and
+  `ember gain` as an approximation, not an invoice.
 - **Unpriced models read $0.00.** Models without a matching row — e.g. custom
-  OpenAI-compatible ids like `gpt-5.5` or provider relays — report no cost, so
+  OpenAI-compatible ids like `custom-unpriced-model` or provider relays — report no cost, so
   the kept-warm value, ping spend, cold-write cost, net savings and the warming
   yield meter all run understated (or read $0.00) for them. Raw counters —
   heartbeat counts, tokens kept warm, idle time held warm, cold-write counts —
   stay accurate regardless. Add a row to `PRICES` in `ember.ts` if you want
   dollar accuracy for such a model.
 
-State lives in `~/.local/share/opencode/ember.json` and is stamped with a
-version. Multiple opencode processes (one per workspace/cmux session) share the
+State lives in `~/.local/share/opencode/ember.json` (schema version 3).
+Multiple opencode processes (one per workspace/cmux session) share the
 file: every write re-reads it and merges, so a process writing its own session's
-window never drops sessions armed elsewhere. Heartbeat and cold-write history is
-bucketed per day and trimmed to the last 90 days for `/ember gain`. A state file
-written before warming was on by default is upgraded silently: its `always:
-false` was the old default rather than a choice, so it is ignored once and the
-new default applies. Delete the file to reset.
+window never drops sessions armed elsewhere. Upgrading preserves guard settings
+and recorded gain history, but resets warming to disabled and clears legacy session
+windows so keepwarm requires an explicit `/keepwarm` to re-arm. Delete the file to reset.
 
 ## Testing
 
@@ -202,7 +196,7 @@ context:
 ```
 
 Wait a minute, then run `/ember`. Its last-ping cache read should be close to
-your context size: that is the proof the fork hit the main cache. Successful
+your context size: that is the proof the keepalive ping hit the main cache. Successful
 pings are silent; failures and stops still show a toast. If the ping reports
 no cache activity, the provider may not cache this prefix or report cache
 usage, so keepwarm stops rather than paying for unverified pings. Stop notices
@@ -211,9 +205,9 @@ the reason afterward.
 
 ## How it works
 
-`chat.message` + `chat.params` (cold guard), `event` (token/price tracking, timers) and
-`command.execute.before` (the two commands, aborted before any model call).
-Pings go through `session.fork` → `session.prompt` → `session.delete`.
+`config` (registers `/keepwarm` and `/ember` commands), `chat.message` + `chat.params`
+(cold-send guard), `event` (token/price tracking from `step-finish`, session cleanup),
+and `command.execute.before` (handles `/keepwarm` and `/ember`, aborted before any model call).
 
 ## Credits
 

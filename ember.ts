@@ -3,66 +3,16 @@ import { mkdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } 
 import { homedir } from "node:os"
 import { dirname, join } from "node:path"
 
-// ember for opencode.
-//
-// A port of karanb192/claude-code-mods `cache-tax` (the "Mod" form) to
-// opencode's plugin API. It does three things:
-//
-//   1. Keep the prompt cache warm. Every session stays armed by default;
-//      after the cache TTL has almost lapsed the plugin sends one
-//      request over a *fork* of the session, which refreshes the same prefix
-//      without appending a single message to the real conversation.
-//      `/keepwarm off` stops it for the session and turns the default off.
-//   2. Stop you on a cold send. When the TTL has lapsed and the context is
-//      large, `/ember guard refuse` hard blocks the prompt and displays an
-//      informative message in the turn before any provider tokens are spent.
-//      `/ember guard warn` (default) shows the price and sends anyway.
-//   3. Keep score. `/ember` prints warm/cold, context, cold price, the
-//      break-even and this session's cold writes. Heartbeats and cold writes
-//      are also bucketed per day in the state file for the `ember gain`
-//      terminal binary to report. All dollar figures are ESTIMATES from the
-//      hard-coded PRICES table — models without a matching row read $0 and
-//      understate totals.
-//
-// Hard rule: keepwarm must never invalidate the cache. So a ping
-//   - runs on a fork of the same session with the same model and the same
-//     agent (and therefore the same tools and system prompt) as the real
-//     session, so its prefix is byte-identical and only appends;
-//   - sends a constant one-line prompt and never touches provider options,
-//     context files, tools or the model;
-//   - stops itself the moment a ping reads nothing or writes at least a tenth
-//     of what it read, i.e. the cache was already gone;
-//   - on window expiry simply stops, leaving the conversation untouched.
-// The empirical check after every ping is the safety net: if opencode's cache
-// tier is shorter than the assumed TTL, the next ping proves it and the loop
-// turns itself off rather than hammering a cold cache.
-//
-// Note on TTL: opencode's interactive sessions mark `cache_control` without a
-// `ttl`, which is Anthropic's 5-minute tier (and the equivalent elsewhere).
-// The default assumed TTL here is therefore 5 minutes and pings land at ~4.
-// If you run a provider that actually holds an hour, set EMBER_TTL_SECONDS
-// or run `/keepwarm 6h ttl 1h` and pings move to the ~54-minute cadence the
-// original mod used.
-
-// Env knobs exist so the whole thing can be exercised in seconds for free:
-//   EMBER_TTL_SECONDS    assume a shorter cache tier (default 300)
-//   EMBER_MIN_CONTEXT    cold-guard context floor in tokens (default 50000)
-//   EMBER_MIN_PING_SECONDS   ping floor (default 60)
 const DEFAULT_TTL_MS = envSeconds("EMBER_TTL_SECONDS") ?? 5 * 60 * 1000
-const DEFAULT_WINDOW_MS = 6 * 60 * 60 * 1000
-// Windows armed without an explicit duration — at session start, and after a
-// cold write — are the same six hours as the default window.
+const DEFAULT_WINDOW_MS = 30 * 60 * 1000
 const AUTO_WARM_MS = DEFAULT_WINDOW_MS
-// Stamped into the state file on every write. `always` defaulted to false
-// before v2, so an unstamped store's `false` is the old default rather than a
-// deliberate `/keepwarm off` and must not be honoured.
-const STORE_VERSION = 2
+const STORE_VERSION = 3
 const BIG_TOKENS = envNumber("EMBER_MIN_CONTEXT") ?? 50_000
 const MIN_PING_MS = (envNumber("EMBER_MIN_PING_SECONDS") ?? 60) * 1000
-const PING_PROMPT = "Reply with the single word: warm"
 const STOP_NOTICE_MS = 5_000
 const STALE_MS = 24 * 60 * 60 * 1000
 const GAIN_RETENTION_DAYS = 90
+
 function stateFilePath(): string {
   return process.env.EMBER_STATE_FILE ?? join(homedir(), ".local", "share", "opencode", "ember.json")
 }
@@ -159,42 +109,57 @@ function envSeconds(name: string): number | null {
   return seconds == null ? null : seconds * 1000
 }
 
+function everyFor(ttl: number): number {
+  return Math.max(MIN_PING_MS, Math.round(ttl * 0.8))
+}
+
 function priceOf(model: ModelRef | null): [number, number, number] | null {
   if (!model) return null
-  const id = model.modelID.toLowerCase().replace(/[\s.]+/g, "-")
-  for (const row of PRICES) if (id.includes(row[0])) return [row[1], row[2], row[3]]
+  const target = `${model.providerID}/${model.modelID}`.toLowerCase()
+  for (const [family, read, write, output] of PRICES) {
+    if (target.includes(family)) return [read, write, output]
+  }
   return null
 }
 
-function fmtUsd(usd: number | null): string {
-  return usd == null ? "n/a" : "$" + (usd >= 100 ? usd.toFixed(0) : usd.toFixed(2))
+function fmtDuration(ms: number): string {
+  if (ms <= 0) return "0s"
+  const sec = Math.round(ms / 1000)
+  const h = Math.floor(sec / 3600)
+  const m = Math.floor((sec % 3600) / 60)
+  const s = sec % 60
+  if (h > 0) return `${h}h${m > 0 ? `${m}m` : ""}`
+  if (m > 0) return `${m}m${s > 0 ? `${s}s` : ""}`
+  return `${s}s`
 }
 
 function fmtTok(n: number): string {
-  return n >= 1e6 ? (n / 1e6).toFixed(1) + "M" : n >= 1000 ? Math.round(n / 1000) + "k" : String(n)
+  if (n >= 1e6) return `${(n / 1e6).toFixed(1)}M tok`
+  if (n >= 1e3) return `${Math.round(n / 1e3)}k tok`
+  return `${n} tok`
 }
 
-function fmtDuration(ms: number): string {
-  const total = Math.max(0, Math.round(ms / 60000))
-  const h = Math.floor(total / 60)
-  const m = total % 60
-  if (h >= 48) return `${Math.floor(h / 24)}d ${h % 24}h`
-  return h > 0 ? `${h}h${String(m).padStart(2, "0")}m` : `${m}m`
+function fmtUsd(n: number | null): string {
+  if (n == null) return "$0.00"
+  if (n >= 100) return `$${n.toFixed(0)}`
+  if (n >= 10) return `$${n.toFixed(2)}`
+  if (n >= 0.01) return `$${n.toFixed(2)}`
+  if (n > 0) return `$${n.toFixed(3)}`
+  return "$0.00"
 }
 
-export function parseDuration(text: string): number | null {
-  const m = /^(?:(\d+)h)?(?:(\d+)m)?$/.exec(text.trim())
-  if (!m || (m[1] === undefined && m[2] === undefined)) return null
-  return (Number(m[1] ?? 0) * 60 + Number(m[2] ?? 0)) * 60 * 1000
+export function parseDuration(raw: string): number | null {
+  const s = raw.trim()
+  const m = s.match(/^(?:(\d+)h)?(?:(\d+)m)?(?:(\d+)s)?$/i)
+  if (!m || (!m[1] && !m[2] && !m[3])) return null
+  const h = Number(m[1] ?? 0)
+  const min = Number(m[2] ?? 0)
+  const sec = Number(m[3] ?? 0)
+  return (h * 3600 + min * 60 + sec) * 1000
 }
 
-function everyFor(ttl: number): number {
-  const slack = Math.max(MIN_PING_MS, Math.round(ttl * 0.1))
-  return Math.max(MIN_PING_MS, Math.min(ttl - slack, 55 * 60 * 1000))
-}
-
-function readDay(raw: unknown): Day {
-  const d = (raw ?? {}) as Partial<Day>
+function cleanDay(raw: unknown): Day {
+  const d = (raw && typeof raw === "object" ? raw : {}) as Record<string, unknown>
   return {
     pings: Number(d.pings) || 0,
     read: Number(d.read) || 0,
@@ -210,60 +175,61 @@ function readStore(): Store {
   try {
     const file = stateFilePath()
     const parsed = JSON.parse(readFileSync(file, "utf8"))
-    // v2 and v3 both carry a deliberate always switch; an unstamped (v1)
-    // store's false is the old default rather than a choice.
-    const stamped = parsed.version === STORE_VERSION || parsed.version === 2
+    if (!parsed || typeof parsed !== "object") throw new Error("corrupt store")
+    const isV3 = parsed.version === STORE_VERSION
     return {
       version: STORE_VERSION,
-      guard: parsed.guard === "refuse" || parsed.guard === "block" ? "refuse" : "warn",
-      always: stamped ? parsed.always !== false : true,
-      sessions: parsed.sessions && typeof parsed.sessions === "object" ? parsed.sessions : {},
-      days: parsed.days && typeof parsed.days === "object"
-        ? Object.fromEntries(Object.entries(parsed.days).map(([k, v]) => [k, readDay(v)]))
-        : {},
+      guard: parsed.guard === "refuse" ? "refuse" : "warn",
+      always: isV3 && parsed.always === true,
+      sessions: isV3 && parsed.sessions && typeof parsed.sessions === "object" ? parsed.sessions : {},
+      days: parsed.days && typeof parsed.days === "object" ? parsed.days : {},
     }
   } catch {
-    return { version: STORE_VERSION, guard: "warn", always: true, sessions: {}, days: {} }
+    return { version: STORE_VERSION, guard: "warn", always: false, sessions: {}, days: {} }
   }
 }
 
-function withLock(file: string, fn: () => void): void {
-  const lock = file + ".lock"
-  const giveUpAt = Date.now() + 2000
+function withLock<T>(filePath: string, fn: () => T): T {
+  const lock = `${filePath}.lock`
+  const maxWait = 500
+  const step = 25
+  const start = Date.now()
   let held = false
-  for (;;) {
+  while (!held) {
     try {
       mkdirSync(lock)
       held = true
-      break
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== "EEXIST") break
+    } catch {
       try {
-        if (Date.now() - statSync(lock).mtimeMs > 5000) rmSync(lock, { recursive: true, force: true })
+        const stats = statSync(lock)
+        if (Date.now() - stats.mtimeMs > 5000) {
+          rmSync(lock, { recursive: true, force: true })
+        }
       } catch {}
-      if (Date.now() > giveUpAt) break
-      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 5)
+      if (Date.now() - start > maxWait) {
+        break
+      }
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, step)
     }
   }
   try {
-    fn()
+    return fn()
   } finally {
     if (held) rmSync(lock, { recursive: true, force: true })
   }
 }
 
-function writeStore(apply?: (fresh: Store) => void): void {
+function writeStore(apply?: (store: Store) => void): void {
   try {
     const file = stateFilePath()
     mkdirSync(dirname(file), { recursive: true })
     withLock(file, () => {
-      // Several opencode processes may share one state file (cmux spawns one
-      // per workspace). Re-read and merge under a lock instead of writing the
-      // possibly stale in-memory snapshot, or windows armed elsewhere get dropped.
       const fresh = readStore()
       const now = Date.now()
-      for (const [id, entry] of Object.entries(fresh.sessions)) {
-        if (now - entry.deadline > STALE_MS) delete fresh.sessions[id]
+      for (const [id, sess] of Object.entries(fresh.sessions)) {
+        if (sess.deadline && sess.deadline < now - STALE_MS) {
+          delete fresh.sessions[id]
+        }
       }
       const dayKeys = Object.keys(fresh.days).sort()
       while (dayKeys.length > GAIN_RETENTION_DAYS) {
@@ -282,7 +248,6 @@ function writeStore(apply?: (fresh: Store) => void): void {
 export const EmberPlugin: Plugin = async ({ client }) => {
   const store = readStore()
   const sessions = new Map<string, Session>()
-  const pingForks = new Set<string>()
   const helperSessions = new Set<string>()
 
   const state = (id: string): Session => {
@@ -304,9 +269,7 @@ export const EmberPlugin: Plugin = async ({ client }) => {
       pendingColdWrite: false,
       misses: [],
       deadline: persisted?.deadline ?? 0,
-      // Older stores predate this flag; their default windows were armed by
-      // `always`, so restore those as continuous when that setting is on.
-      continuous: persisted?.continuous ?? store.always,
+      continuous: persisted?.continuous ?? false,
       stopped: null,
       lastPing: null,
       pinging: false,
@@ -326,17 +289,18 @@ export const EmberPlugin: Plugin = async ({ client }) => {
 
   const persistSession = (s: Session) => {
     writeStore((fresh) => {
-      if (s.deadline) fresh.sessions[s.id] = { deadline: s.deadline, every: s.every, ttl: s.ttl, continuous: s.continuous }
-      else delete fresh.sessions[s.id]
+      if (!s.deadline) {
+        delete fresh.sessions[s.id]
+      } else {
+        fresh.sessions[s.id] = { deadline: s.deadline, every: s.every, ttl: s.ttl, continuous: s.continuous }
+      }
     })
   }
 
-  // Increment a today-bucket for /ember gain. Reads the file fresh via
-  // writeStore, so days recorded by other processes are preserved.
-  const recordHistory = (apply: (d: Day) => void) => {
+  const recordHistory = (apply: (day: Day) => void) => {
+    const key = new Date().toISOString().slice(0, 10)
     writeStore((fresh) => {
-      const key = new Date().toISOString().slice(0, 10)
-      const day = fresh.days[key] ?? { pings: 0, read: 0, pingUsd: 0, keptUsd: 0, colds: 0, coldUsd: 0, warmMs: 0 }
+      const day = fresh.days[key] ? cleanDay(fresh.days[key]) : { pings: 0, read: 0, pingUsd: 0, keptUsd: 0, colds: 0, coldUsd: 0, warmMs: 0 }
       apply(day)
       fresh.days[key] = day
     })
@@ -370,13 +334,13 @@ export const EmberPlugin: Plugin = async ({ client }) => {
     if (!s.deadline) return
     const now = Date.now()
     if (now >= s.deadline) {
-      if (!s.continuous) return stop(s, null)
-      s.deadline = now + DEFAULT_WINDOW_MS
-      persistSession(s)
+      if (s.continuous) {
+        s.deadline = now + DEFAULT_WINDOW_MS
+        persistSession(s)
+      } else {
+        return stop(s, null)
+      }
     }
-    // A ping past the cache tier would cold-write the fork itself; the loop
-    // then stops and the context is dead anyway. Wait for the next real turn
-    // to refresh lastRequestAt instead of paying to rebuild a dead cache.
     if (s.lastRequestAt && now >= s.lastRequestAt + s.ttl) return
     const base = s.lastRequestAt || now
     const delay = Math.max(1000, Math.min(base + s.every - now, s.deadline - now))
@@ -395,58 +359,9 @@ export const EmberPlugin: Plugin = async ({ client }) => {
   }
 
   const ping = async (s: Session) => {
-    if (s.pinging) return
+    clearTimer(s)
     if (!s.deadline || (Date.now() >= s.deadline && !s.continuous)) return stop(s, null)
-    if (Date.now() >= s.deadline) {
-      s.deadline = Date.now() + DEFAULT_WINDOW_MS
-      persistSession(s)
-    }
-    if (s.lastRequestAt && Date.now() >= s.lastRequestAt + s.ttl) return clearTimer(s)
-    if (!s.lastModel) return stop(s, "no model seen yet for this session")
-    s.pinging = true
-    try {
-      const status = await client.session.status().catch(() => undefined)
-      if (status?.data?.[s.id]?.type === "busy") {
-        s.pinging = false
-        clearTimer(s)
-        s.timer = setTimeout(() => void ping(s), 20_000)
-        return
-      }
-
-      // Free keepalive: touch and refresh the session in OpenCode without forking or sending LLM prompts
-      if (client.session.get) {
-        await client.session.get({ path: { id: s.id } }).catch(() => undefined)
-      }
-
-      const warm = !isCold(s)
-      s.lastPing = { at: Date.now(), read: s.ctx, write: 0, usd: 0, warm }
-      s.stumble = 0
-      s.tail = 0
-
-      // Touch heartbeat and schedule next cadence
-      s.lastRequestAt = Date.now()
-      s.pinging = false
-      schedule(s)
-      persistSession(s)
-      recordHistory((d) => {
-        d.pings++
-        d.read += s.ctx
-        d.warmMs += s.every
-      })
-    } catch (error) {
-      s.pinging = false
-      s.stumble++
-      // A transient error should not stop keepalive; retry at next cadence
-      if (s.stumble < 2) {
-        schedule(s)
-        return
-      }
-      const why = `the session keepalive failed: ${error instanceof Error ? error.message : String(error)}`
-      await toast(`keepwarm stopped: ${why}`, "error", STOP_NOTICE_MS)
-      stop(s, why)
-    } finally {
-      s.pinging = false
-    }
+    stop(s, "no supported captured model request is available")
   }
 
   const coldUsd = (s: Session): number | null => {
@@ -608,14 +523,13 @@ export const EmberPlugin: Plugin = async ({ client }) => {
 
   const usage = (): string =>
     [
-      "/keepwarm                 keep this session warm for six hours",
+      "/keepwarm                 arm warming for 30 minutes (or current window)",
       "/keepwarm 90m             a window of your own (also 2h30m, 6h)",
-      "/keepwarm always          keep this and future sessions armed until closed (default)",
+      "/keepwarm always          keep this and future sessions armed across breaks (30m window per turn)",
       "/keepwarm 6h every 2m     override the ping period (floor 1m)",
       "/keepwarm 6h ttl 1h       assume the 1-hour cache tier",
       "/keepwarm status          the status line",
       "/keepwarm off             stop, forget the window, turn always off",
-      "/ember                    the card (history lives in `ember gain`)",
       "/ember                    the card",
       "/ember guard warn         show the price and send (default)",
       "/ember guard refuse       hard block cold sends",
@@ -666,7 +580,7 @@ export const EmberPlugin: Plugin = async ({ client }) => {
     },
 
     "chat.message": async (input, output) => {
-      if (pingForks.has(input.sessionID) || helperSessions.has(input.sessionID)) return
+      if (helperSessions.has(input.sessionID)) return
       if (!sessions.has(input.sessionID)) {
         const session = client.session.get
           ? await client.session.get({ path: { id: input.sessionID } }).catch(() => undefined)
@@ -756,7 +670,7 @@ export const EmberPlugin: Plugin = async ({ client }) => {
             if (!s) {
               if (helperSessions.has(id)) break
               const persisted = readStore().sessions[id]
-              if (!persisted && !store.always) break
+              if (!persisted || !persisted.deadline || Date.now() >= persisted.deadline) break
               const info = client.session.get ? await client.session.get({ path: { id } }).catch(() => undefined) : undefined
               if (info?.data?.parentID) {
                 helperSessions.add(id)
@@ -765,14 +679,11 @@ export const EmberPlugin: Plugin = async ({ client }) => {
                 })
                 break
               }
-              if (persisted) store.sessions[id] = persisted
+              store.sessions[id] = persisted
               s = state(id)
               await hydrate(s)
             }
-            if (store.always && (!s.deadline || s.stopped)) {
-              arm(s, AUTO_WARM_MS, undefined, true)
-            } else {
-              if (!s.deadline || s.stopped) break
+            if (s.deadline && !s.stopped && Date.now() < s.deadline) {
               schedule(s)
             }
             break

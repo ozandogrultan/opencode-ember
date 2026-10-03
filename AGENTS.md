@@ -2,9 +2,8 @@
 
 ## What this is
 
-An [opencode](https://opencode.ai) **server plugin** (not a TUI plugin) that keeps
-a session's prefix cache warm across a break, prices a lapsed cache before a cold
-send, and reports what a break cost. It is a port of
+An [opencode](https://opencode.ai) **server plugin** (not a TUI plugin) that
+prices a lapsed cache before a cold send and reports what a break cost. It is a port of
 [`cache-tax`](https://github.com/karanb192/claude-code-mods/tree/main/plugins/cache-tax);
 the price arithmetic and safety rules are the original author's.
 
@@ -34,20 +33,16 @@ bun run gain        # run the reporting CLI
 
 ## Hard-won rules — do not regress
 
-- **A ping only appends.** Reuse the session's exact model, agent, tools and
-  system prompt, and send a constant one-line prompt. Never edit, clear,
-  compact, or delete-and-recreate the session.
-- **Never cold-rewrite.** Ping only while the last request is still inside the
-  cache tier. A session resumed after the tier expired waits for the next real
-  turn instead of forking a cold cache.
-- **Self-stop on doubt.** A ping that wrote at least a tenth of what it read
-  means the cache was already gone: stop. Two consecutive zero-activity
-  readbacks stop it too; one inconclusive report or transient error retries
-  once first.
+- **Keepwarm is opt-in, fail-closed, and never mutates sessions or provider config.**
+  Never fork, prompt, delete, or append to a session for background warming.
+  Never mutate `config.provider` or wrap provider `options.fetch` (which clobbers
+  authentication plugins and breaks provider initialization). Background warming
+  fails closed with "no supported captured model request is available" and never
+  issues background provider requests.
 - **Shared, versioned state.** Every write re-reads and merges
   `~/.local/share/opencode/ember.json` so sessions armed by other opencode
-  processes are never dropped. A pre-v2 unstamped `always: false` is the old
-  default, not an opt-out.
+  processes are never dropped. Warming is disabled by default; unstamped defaults
+  must not be implicitly enabled.
 - **Prices are estimates.** They are hard-coded list rates; unpriced models must
   read `$0.00` while raw counters (heartbeats, tokens, cold writes) stay
   accurate.
