@@ -191,7 +191,7 @@ function readStore(): Store {
 
 function withLock<T>(filePath: string, fn: () => T): T {
   const lock = `${filePath}.lock`
-  const maxWait = 500
+  const maxWait = 5000
   const step = 25
   const start = Date.now()
   let held = false
@@ -207,7 +207,7 @@ function withLock<T>(filePath: string, fn: () => T): T {
         }
       } catch {}
       if (Date.now() - start > maxWait) {
-        break
+        throw new Error("timed out acquiring ember state lock")
       }
       Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, step)
     }
