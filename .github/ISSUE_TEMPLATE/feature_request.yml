@@ -5,11 +5,9 @@ body:
   - type: markdown
     attributes:
       value: |
-        Before filing, please read [AGENTS.md](../blob/main/AGENTS.md) and the
-        "It will not invalidate your cache" section of the
-        [README](../blob/main/README.md) — pings must never edit, clear or
-        cold-rewrite a session. Requests that fit the existing direction are
-        easiest to accept.
+        Before filing, please read [AGENTS.md](https://github.com/ozandogrultan/opencode-ember/blob/main/AGENTS.md)
+        and [Safe warming status](https://github.com/ozandogrultan/opencode-ember/blob/main/README.md#safe-warming-status).
+        Background warming must not mutate sessions or provider configuration.
   - type: textarea
     id: problem
     attributes:
