@@ -4,8 +4,11 @@
 
 `ember` is published to npm (`opencode-ember`) and developed on `main`. Only the
 latest release and the tip of `main` are supported; there are no maintained
-release branches or backports. Upgrade to the latest version (`npm install -g
-opencode-ember` or a fresh `git pull`) before reporting an issue.
+release branches or backports. Upgrade the plugin before reporting an issue:
+for a copied installation, run `git pull`, rerun `./install.sh`, and restart
+opencode; for an npm-configured plugin, select the latest version in opencode's
+plugin configuration and restart. `npm install -g opencode-ember` updates only
+the reporting CLI, not the plugin loaded by opencode.
 
 ## Reporting a vulnerability
 

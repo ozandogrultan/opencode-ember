@@ -26,7 +26,8 @@ bun run typecheck    # tsc --noEmit
 bun run lint:sh      # bash -n on every script
 ```
 
-CI runs the same checks plus ShellCheck on the scripts.
+Also run `bash scripts/changelog.sh check`. CI checks ShellCheck errors,
+the publishable tarball, and commit messages in addition to the tests and typecheck.
 
 ## Guidelines
 
@@ -35,10 +36,9 @@ CI runs the same checks plus ShellCheck on the scripts.
 - Keep PRs focused. One concern per PR, with a clear description of the *why*.
 - Match the surrounding style. TypeScript is formatted by hand; no formatter is
   enforced.
-- A warm ping must only **append**: reuse the session's exact model, agent,
-  tools and system prompt, and never edit, clear, compact or cold-rewrite the
-  session.
-- Never ping a cache that has already lapsed; stop the heartbeat instead.
+- Keep background warming fail-closed: never fork, prompt, delete, or append
+  to a session, mutate provider config, or wrap provider `options.fetch`.
+  The current timer stops without issuing background provider requests.
 - Dollar figures are hard-coded estimates. An unpriced model must read `$0.00`
   and leave the raw counters accurate.
 - New behaviour should come with a test in `test/` where practical.
@@ -82,12 +82,13 @@ This is enforced locally by Git hooks that `bun install` installs (via husky):
 - `commit-msg` runs commitlint over your message.
 - `pre-commit` runs `bun run lint:sh`, `bun run typecheck`, and `bun run test`.
 
-Bypass a hook for one commit with `git commit --no-verify` (or `HUSKY=0`), but
-CI lints the commits in a pull request regardless.
+Fix failing checks before committing; do not bypass the hooks. CI also lints
+the commits in a pull request.
 
 ## Releases
 
-Releases are cut from the **Release** workflow (`workflow_dispatch`), which asks
+Releases run on `v*` tag pushes or from the **Release** workflow
+(`workflow_dispatch`), which asks
 for a `patch`, `minor` or `major` bump and then:
 
 1. bumps `package.json` to the next version,
@@ -98,9 +99,11 @@ for a `patch`, `minor` or `major` bump and then:
 
 Write Conventional Commits for notable changes. A release with no notable
 commits since the previous tag is a no-op. A tag without a matching section
-uses GitHub-generated release notes.
+uses GitHub-generated release notes. Tag pushes skip npm publishing when the
+version already exists on the registry, but still create or update the GitHub release.
 
-`scripts/changelog.sh` performs the same steps locally:
+`scripts/changelog.sh` manages changelog text locally; it does not bump
+`package.json`, commit, tag, push, or publish:
 
 ```bash
 scripts/changelog.sh draft          # classify commits since the last tag (prints only)

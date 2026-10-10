@@ -15,6 +15,7 @@ Closes #
 
 - [ ] `bun run test` passes.
 - [ ] `bun run typecheck` passes.
-- [ ] Read the "It will not invalidate your cache" section of the README; this
-      change does not make a ping edit, clear, or cold-rewrite the session.
-- [ ] I updated the docs (README / CHANGELOG) where behaviour changed.
+- [ ] `bun run lint:sh` and `bash scripts/changelog.sh check` pass.
+- [ ] Read [Safe warming status](https://github.com/ozandogrultan/opencode-ember/blob/main/README.md#safe-warming-status);
+      this change preserves fail-closed warming without session or provider configuration mutation.
+- [ ] I updated the docs where behaviour changed; CHANGELOG contains released versions only.
