@@ -1,6 +1,6 @@
-import { describe, expect, it, beforeEach, afterEach, setSystemTime } from "bun:test"
+import { describe, expect, it, beforeEach, afterEach, setSystemTime, spyOn } from "bun:test"
 import { EmberPlugin, parseDuration } from "../ember"
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs"
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import { join } from "node:path"
 import { tmpdir } from "node:os"
 
@@ -470,6 +470,51 @@ describe("opencode-ember", () => {
       expect(JSON.parse(readFileSync(stateFile, "utf8")).sessions.child).toBeUndefined()
     } finally {
       clock.restore()
+      await plugin.dispose!()
+    }
+  })
+
+  it("waits for a state lock held longer than 500 milliseconds", async () => {
+    const lock = `${stateFile}.lock`
+    mkdirSync(lock)
+    const holder = Bun.spawn(["bun", "-e", `
+      import { rmSync } from "node:fs"
+      setTimeout(() => rmSync(process.argv[1], { recursive: true }), 1000)
+    `, lock], { stdout: "ignore", stderr: "pipe" })
+    const plugin = await EmberPlugin({ client: silentClient } as any)
+    try {
+      await expect(plugin["command.execute.before"]!(
+        { command: "ember", sessionID: "waiting", arguments: "guard refuse" },
+        { parts: [] } as any,
+      )).rejects.toThrow("ember guard refuse")
+      expect(existsSync(lock)).toBe(false)
+      expect(JSON.parse(readFileSync(stateFile, "utf8")).guard).toBe("refuse")
+    } finally {
+      await plugin.dispose!()
+      expect(await holder.exited).toBe(0)
+    }
+  })
+
+  it("does not write state when lock acquisition times out", async () => {
+    const stored = JSON.stringify({ version: 3, guard: "warn", always: false, sessions: {}, days: {} })
+    writeFileSync(stateFile, stored)
+    const lock = `${stateFile}.lock`
+    mkdirSync(lock)
+    const plugin = await EmberPlugin({ client: silentClient } as any)
+    const now = Date.now()
+    const clock = spyOn(Date, "now")
+      .mockReturnValueOnce(now)
+      .mockReturnValueOnce(now)
+      .mockReturnValue(now + 6000)
+    try {
+      await expect(plugin["command.execute.before"]!(
+        { command: "ember", sessionID: "timeout", arguments: "guard refuse" },
+        { parts: [] } as any,
+      )).rejects.toThrow("ember guard refuse")
+      expect(readFileSync(stateFile, "utf8")).toBe(stored)
+      expect(existsSync(lock)).toBe(true)
+    } finally {
+      clock.mockRestore()
       await plugin.dispose!()
     }
   })
