@@ -29,12 +29,20 @@ no-ops when no notable commits have landed since the last release.
 If you prefer to bump locally, write the changelog section before tagging:
 
 ```bash
-bash scripts/changelog.sh release 0.2.0   # write [0.2.0] from commits
-npm version minor                          # patch / minor / major per the commit types
-git push --follow-tags                     # the tag push triggers the same release workflow
+version=0.4.3                              # choose the next version from the commit types
+npm version "$version" --no-git-tag-version
+bash scripts/changelog.sh release "$version"
+bash scripts/changelog.sh check
+git add package.json CHANGELOG.md
+git commit -m "chore(release): $version"
+git tag -a "v$version" -m "v$version"
+git push --follow-tags                    # triggers the tag-push release workflow
 ```
 
-`prepublishOnly` runs the tests and typecheck again before uploading.
+Start with a clean working tree. The explicit commit includes the changelog
+and passes the Conventional Commit hook. `prepublishOnly` runs the tests and
+typecheck again before uploading. A tag push skips npm publishing if that
+version already exists, but still creates or updates the GitHub release.
 
 ## Before you release
 
@@ -53,10 +61,8 @@ Actions publisher must point at:
 - repository: `opencode-ember`
 - workflow filename: `release.yml`
 
-Renaming that workflow file breaks publishing; update the npm setting too. The
-first releases (0.1.0 and 0.2.0) predate this setup and were published with the
-npm CLI directly; configure the publisher above so later releases go through the
-workflow.
+Renaming that workflow file requires updating the npm setting too. Confirm
+the trusted publisher is configured before running the release workflow.
 
 [trusted]: https://docs.npmjs.com/trusted-publishers
 

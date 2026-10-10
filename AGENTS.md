@@ -33,7 +33,7 @@ bun run gain        # run the reporting CLI
 
 ## Hard-won rules — do not regress
 
-- **Keepwarm is opt-in, fail-closed, and never mutates sessions or provider config.**
+- **Background warming is unavailable, fail-closed, and never mutates sessions or provider config.**
   Never fork, prompt, delete, or append to a session for background warming.
   Never mutate `config.provider` or wrap provider `options.fetch` (which clobbers
   authentication plugins and breaks provider initialization). Background warming
@@ -41,8 +41,9 @@ bun run gain        # run the reporting CLI
   issues background provider requests.
 - **Shared, versioned state.** Every write re-reads and merges
   `~/.local/share/opencode/ember.json` so sessions armed by other opencode
-  processes are never dropped. Warming is disabled by default; unstamped defaults
-  must not be implicitly enabled.
+  processes are preserved. Automatic arming is disabled by default; unstamped
+  defaults must not be implicitly enabled. Explicit commands and recorded cold
+  writes can arm timers, but no timer sends a warming request.
 - **Prices are estimates.** They are hard-coded list rates; unpriced models must
   read `$0.00` while raw counters (heartbeats, tokens, cold writes) stay
   accurate.
@@ -51,6 +52,7 @@ bun run gain        # run the reporting CLI
 
 ```bash
 bun run test && bun run typecheck && bun run lint:sh
+bash scripts/changelog.sh check
 ```
 
 ## Conventions
