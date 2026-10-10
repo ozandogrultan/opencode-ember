@@ -37,7 +37,7 @@ dependencies.
 ## Requirements
 
 - [opencode](https://opencode.ai) with the 1.18.x server-plugin API
-  (`@opencode-ai/plugin`; development dependency pinned to 1.18.31).
+  (`@opencode-ai/plugin`; see [package.json](package.json) for the development version).
   OpenCode V2 compatibility is not verified.
 - A provider with prefix caching and reported token usage. Built-in estimates
   cover selected Anthropic, OpenAI, and Gemini model families.
