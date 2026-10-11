@@ -1,7 +1,7 @@
 {
   "name": "opencode-ember",
   "version": "0.4.2",
-  "description": "Estimate cold prompt-cache rewrite costs, warn or block before sends, and report recorded cold writes across sessions. An opencode server plugin.",
+  "description": "OpenCode prompt-cache cost guard: estimates cold cache-rewrite costs, warns or blocks before expensive sends, and reports recorded costs across sessions.",
   "type": "module",
   "license": "MIT",
   "author": "Ozan Dogrultan",
@@ -22,7 +22,9 @@
     "anthropic",
     "llm",
     "cost",
-    "tokens"
+    "tokens",
+    "cost-estimation",
+    "token-cost"
   ],
   "main": "ember.ts",
   "exports": {
