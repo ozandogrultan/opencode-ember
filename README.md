@@ -1,6 +1,6 @@
 # opencode-ember
 
-[![CI](https://github.com/ozandogrultan/opencode-ember/actions/workflows/ci.yml/badge.svg)](https://github.com/ozandogrultan/opencode-ember/actions/workflows/ci.yml)
+[![CI](https://github.com/ozandogrultan/opencode-ember/actions/workflows/ci.yml/badge.svg)](https://github.com/ozandogrultan/opencode-ember/actions/workflows/ci.yml) [![npm](https://img.shields.io/npm/v/opencode-ember)](https://www.npmjs.com/package/opencode-ember)
 
 Estimate the cost of a **cold prompt-cache rewrite**, warn or block before
 the send, and report recorded cold writes across sessions.
