@@ -315,7 +315,7 @@ export const EmberPlugin: Plugin = async ({ client }) => {
     if (s.stopped) return s.stopped
     if (!s.deadline) return undefined
     const left = fmtDuration(s.deadline - Date.now())
-    const next = s.lastRequestAt ? ` · ping in ${fmtDuration(s.lastRequestAt + s.every - Date.now())}` : " · waiting for the first turn"
+    const next = s.lastRequestAt ? ` · timer fires in ${fmtDuration(s.lastRequestAt + s.every - Date.now())}` : " · waiting for the first turn"
     const ping = s.lastPing ? ` · last ping read ${fmtTok(s.lastPing.read)} ${fmtUsd(s.lastPing.usd)}` : ""
     return `keepwarm ${s.continuous ? "always" : `${left} left`}${next}${ping}`
   }
@@ -523,9 +523,9 @@ export const EmberPlugin: Plugin = async ({ client }) => {
 
   const usage = (): string =>
     [
-      "/keepwarm                 arm warming for 30 minutes (or current window)",
+      "/keepwarm                 arm the timer for the default window",
       "/keepwarm 90m             a window of your own (also 2h30m, 6h)",
-      "/keepwarm always          keep this and future sessions armed across breaks (30m window per turn)",
+      "/keepwarm always          arm this and future sessions automatically",
       "/keepwarm 6h every 2m     override the ping period (floor 1m)",
       "/keepwarm 6h ttl 1h       assume the 1-hour cache tier",
       "/keepwarm status          the status line",
@@ -539,7 +539,7 @@ export const EmberPlugin: Plugin = async ({ client }) => {
     config: async (input) => {
       const command = (input.command ??= {}) as Record<string, { description?: string; template: string }>
       if (!command.keepwarm)
-        command.keepwarm = { description: "Keep the prompt cache warm across a break", template: "keepwarm" }
+        command.keepwarm = { description: "Arm the keepwarm timer for this session", template: "keepwarm" }
       if (!command["ember"])
         command["ember"] = { description: "Show the prompt-cache cost card", template: "ember" }
     },

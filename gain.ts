@@ -2,9 +2,9 @@
 // ember gain (alias: ember discover)
 //
 // Terminal report over the history the ember opencode plugin collects in its
-// state file (daily buckets of keepwarm heartbeats and paid cold writes).
-// Renders totals, a warming-yield meter and a per-day impact table in the
-// spirit of `rtk gain`.
+// state file (daily buckets of recorded cold writes and any stored heartbeat
+// history). Renders totals, a warming-yield meter and a per-day impact table in
+// the spirit of `rtk gain`.
 //
 // All dollar figures are ESTIMATES built from the same hard-coded price table
 // the plugin uses (`PRICES` in ember.ts). Models without a matching price row
@@ -69,7 +69,7 @@ export function render(days: Record<string, Day>, color: boolean): string {
   const palette = color && process.stdout.isTTY ? ansi : noColor
   const entries = Object.entries(days).sort(([a], [b]) => (a < b ? -1 : 1))
   if (entries.length === 0) {
-    return "ember gain: no history yet — heartbeats and cold writes record as they happen"
+    return "ember gain: no history yet — cold writes record as they happen"
   }
   let pings = 0, read = 0, pingUsd = 0, keptUsd = 0, colds = 0, coldUsd = 0, warmMs = 0
   for (const [, d] of entries) {

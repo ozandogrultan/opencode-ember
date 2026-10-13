@@ -34,6 +34,5 @@ mkdir -p "$bin_dir"
 ln -sf "$here/gain.ts" "$bin_dir/ember"
 echo "cli -> $bin_dir/ember   (run: ember gain  ·  ember discover)"
 echo
-echo "Add the plugin, then restart opencode; verify with:"
+echo "Restart opencode, then verify with:"
 echo "  opencode debug config | grep -A2 -E '\"keepwarm\"|\"ember\"'"
-echo "  opencode debug config | grep -A3 ember | grep '\"ember\"'"
