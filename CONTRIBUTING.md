@@ -72,9 +72,9 @@ Examples:
 
 ```text
 feat(guard): refuse cold sends over the context floor
-fix(ping): stop after two zero-activity readbacks
+fix(state): merge concurrent writes under the lock
 docs: document the pricing caveats
-feat!: drop support for opencode < 1.18
+feat!: rename the state file environment variable
 ```
 
 This is enforced locally by Git hooks that `bun install` installs (via husky):

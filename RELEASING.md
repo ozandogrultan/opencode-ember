@@ -29,7 +29,7 @@ no-ops when no notable commits have landed since the last release.
 If you prefer to bump locally, write the changelog section before tagging:
 
 ```bash
-version=0.4.3                              # choose the next version from the commit types
+version=X.Y.Z                              # the next version, chosen from the commit types
 npm version "$version" --no-git-tag-version
 bash scripts/changelog.sh release "$version"
 bash scripts/changelog.sh check

@@ -6,23 +6,14 @@ configuration.
 
 ## What you are installing
 
-```
-.
-├── ember.ts             the whole plugin — one file, no runtime dependencies
-├── gain.ts              reporting CLI — requires Bun on PATH
-├── install.sh           copies the plugin and links the reporting CLI
-├── README.md            human-facing docs (leave alone)
-└── INSTALL.md           this file
-```
-
-`ember` is a server-side opencode plugin. It registers two slash commands
-(`/keepwarm`, `/ember`) and hooks `chat.message`, `chat.params`, `event` and
-`command.execute.before`. Its only import from `@opencode-ai/plugin` is a
-**type-only** import, which is erased at runtime, so it needs nothing installed
-and no package manager for the plugin itself. The reporting CLI runs TypeScript
-through Bun. The plugin targets the 1.18.x `@opencode-ai/plugin` API;
-OpenCode V2 compatibility is not verified. Background warming is unavailable:
-the keepwarm timer stops without sending provider requests.
+`ember` is a server-side opencode plugin: `ember.ts` is the whole plugin, `gain.ts`
+is the reporting CLI (requires Bun on PATH), and `install.sh` installs both.
+It registers two slash commands (`/keepwarm`, `/ember`). Its only import from
+`@opencode-ai/plugin` is a **type-only** import, which is erased at runtime, so
+it needs nothing installed and no package manager for the plugin itself. The
+supported opencode range is `engines` in `package.json`; see the README for
+compatibility notes. Background warming is unavailable: the keepwarm timer
+stops without sending provider requests.
 
 ## Steps
 

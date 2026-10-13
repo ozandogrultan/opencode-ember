@@ -31,13 +31,14 @@ dependencies.
 - **`ember gain` reports history.** After a cold-send warning, a completed step
   with cache-write tokens records a cold write in a UTC daily bucket. The report
   includes cold-write counts and estimated costs, plus any stored heartbeat history.
-  Totals cover all retained buckets; the per-day table shows the latest 21.
+  Totals cover all retained buckets; the per-day table shows only the most recent days.
   `ember discover` is an alias; `ember gain --json` dumps the raw buckets.
 
 ## Requirements
 
-- [opencode](https://opencode.ai) with the 1.18.x server-plugin API
-  (`@opencode-ai/plugin`; see [package.json](package.json) for the development version).
+- [opencode](https://opencode.ai) with the server-plugin API
+  (`@opencode-ai/plugin`). [package.json](package.json) records the supported
+  opencode range (`engines`) and the plugin version used for development.
   OpenCode V2 compatibility is not verified.
 - A provider with prefix caching and reported token usage. Built-in estimates
   cover selected Anthropic, OpenAI, and Gemini model families.
@@ -78,7 +79,7 @@ Copy `ember.ts` to one of:
 { "plugin": ["opencode-ember"] }
 ```
 
-in `opencode.json` for the 1.18.x API, then restart opencode. Install the CLI
+in `opencode.json`, then restart opencode. Install the CLI
 separately with `npm install -g opencode-ember` if you want `ember gain`.
 
 ## Usage
@@ -91,7 +92,7 @@ ember gain | discover [--json]     # the report, from any shell
 
 | command | effect |
 | --- | --- |
-| `/keepwarm` | arm a 30-minute timer window (default cadence 4m); retain always mode if enabled |
+| `/keepwarm` | arm a timer window (30 minutes by default); retain always mode if enabled |
 | `/keepwarm 90m` | a window of your own (`2h30m`, `6h`, …) |
 | `/keepwarm always` | persist automatic arming for this and future normal sessions |
 | `/keepwarm 6h every 2m` | override the ping period (floor 1m) |
@@ -104,7 +105,7 @@ ember gain | discover [--json]     # the report, from any shell
 | `ember gain` | terminal report over collected history (alias `ember discover`) |
 
 Automatic arming is disabled by default. `/keepwarm` and `/keepwarm always`
-arm timers explicitly; a recorded cold write can also arm a 30-minute window.
+arm timers explicitly; a recorded cold write can also arm a default-length window.
 None of these paths sends warming requests. `/keepwarm off` does not cancel
 timers already armed in other sessions.
 
@@ -118,8 +119,7 @@ Guard mode is persisted globally and shared across sessions and processes.
 
 The default assumed TTL is **5 minutes**. The guard compares it with the time
 of the latest completed model step; it does not query the provider's cache.
-Default timer cadence is 80% of the TTL, subject to the configured floor:
-4 minutes for a 5-minute TTL, or 48 minutes for a 1-hour TTL.
+Default timer cadence is 80% of the TTL, subject to the configured ping floor.
 
 `/keepwarm 6h ttl 1h` changes this session's assumed TTL;
 `EMBER_TTL_SECONDS=3600` changes the default. Neither selects a provider cache
@@ -170,17 +170,16 @@ read, cache write and output rates per model family). Two consequences:
   the kept-warm value, ping spend, cold-write cost, net savings and the warming
   yield meter all run understated (or read $0.00) for them. Raw counters —
   heartbeat counts, tokens kept warm, idle time held warm, cold-write counts —
-  are independent of pricing. This version adds no heartbeat or kept-warm counters.
-  Add a row to `PRICES` in `ember.ts` to include a model in the estimates.
+  are independent of pricing. Add a row to `PRICES` in `ember.ts` to include a model in the estimates.
 
-State lives in `~/.local/share/opencode/ember.json` (schema version 3).
+State lives in a versioned file, `~/.local/share/opencode/ember.json` by default.
 Multiple opencode processes (one per workspace/cmux session) share the
 file: every write re-reads it and merges, so a process writing its own session's
 window preserves sessions armed elsewhere. Reading older or unversioned state
 preserves guard settings and recorded gain history, but disables automatic arming
-and discards legacy session windows; version-3 settings and windows are retained.
-Daily history is trimmed to approximately 90 stored date buckets on writes,
-not 90 calendar days. Delete the file to reset settings and history.
+and discards legacy session windows; current-version settings and windows are retained.
+Daily history is trimmed to a bounded number of stored date buckets on writes,
+not a number of calendar days. Delete the file to reset settings and history.
 
 ## Testing
 
@@ -221,19 +220,14 @@ In a fresh session with no prior turn, wait a little over a minute, then run
 The callback sends no provider request, records no heartbeat, and shows no stop
 toast. Run `/keepwarm off` afterward.
 
-Repository checks:
-
-```sh
-bun install
-bun run test && bun run typecheck && bun run lint:sh
-bash scripts/changelog.sh check
-```
+Repository checks are listed in [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## How it works
 
 `config` (registers `/keepwarm` and `/ember` commands), `chat.message` + `chat.params`
 (cold-send guard), `event` (token/price tracking from `step-finish`, session cleanup),
-and `command.execute.before` (handles `/keepwarm` and `/ember`, aborted before any model call).
+`command.execute.before` (handles `/keepwarm` and `/ember`, aborted before any model call),
+and `dispose` (clears timers).
 
 ## Credits
 

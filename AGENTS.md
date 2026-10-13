@@ -15,6 +15,7 @@ the price arithmetic and safety rules are the original author's.
   timers, `/keepwarm` and `/ember` commands.
 - `gain.ts` — the `ember gain` / `ember discover` CLI over the state file
   (a standalone `bin`, no runtime deps).
+- `INSTALL.md` — step-by-step install and verification for an agent.
 - `install.sh` — copies `ember.ts` into opencode's global plugin directory and
   links the CLI as `~/.local/bin/ember`.
 - `test/` — bun tests (`bun test`).
