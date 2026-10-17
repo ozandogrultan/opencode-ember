@@ -1,6 +1,14 @@
-# opencode-ember
+<h1 align="center">
+  <img src="assets/logo.svg" alt="ember" height="96">
+</h1>
 
-[![CI](https://github.com/ozandogrultan/opencode-ember/actions/workflows/ci.yml/badge.svg)](https://github.com/ozandogrultan/opencode-ember/actions/workflows/ci.yml) [![npm](https://img.shields.io/npm/v/opencode-ember)](https://www.npmjs.com/package/opencode-ember)
+<p align="center">
+  <a href="https://github.com/ozandogrultan/opencode-ember/actions/workflows/ci.yml"><img src="https://github.com/ozandogrultan/opencode-ember/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+  <a href="https://www.npmjs.com/package/opencode-ember"><img src="https://img.shields.io/npm/v/opencode-ember" alt="npm"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="License: MIT"></a>
+  <a href="#contributing"><img src="https://img.shields.io/badge/PRs-welcome-brightgreen.svg" alt="PRs welcome"></a>
+  <a href="https://github.com/ozandogrultan/opencode-ember/stargazers"><img src="https://img.shields.io/github/stars/ozandogrultan/opencode-ember?style=social" alt="GitHub stars"></a>
+</p>
 
 Estimate the cost of a **cold prompt-cache rewrite**, warn or block before
 the send, and report recorded cold writes across sessions.
