@@ -5,19 +5,22 @@ updates:
     schedule:
       interval: weekly
     open-pull-requests-limit: 5
-    ignore:
-      # @opentui/keymap pins an exact solid-js peer, so it can only move in
-      # lockstep with OpenTUI (bump it in the opentui group instead).
-      - dependency-name: solid-js
+    cooldown:
+      default-days: 3
     groups:
-      opentui:
-        patterns:
-          - "@opentui/*"
       opencode:
         patterns:
           - "@opencode-ai/*"
+      npm-minor-patch:
+        update-types:
+          - minor
+          - patch
+        patterns:
+          - "*"
 
   - package-ecosystem: github-actions
     directory: /
     schedule:
       interval: weekly
+    cooldown:
+      default-days: 3
