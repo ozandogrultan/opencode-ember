@@ -10,25 +10,21 @@
   <a href="https://github.com/ozandogrultan/opencode-ember/stargazers"><img src="https://img.shields.io/github/stars/ozandogrultan/opencode-ember?style=social" alt="GitHub stars"></a>
 </p>
 
-Estimate the cost of a **cold prompt-cache rewrite**, warn or block before
-the send, and report recorded cold writes across sessions.
+See what a **cold prompt-cache rewrite** will cost before you send it. When
+the cache TTL has lapsed on a large context, ember shows the price or blocks
+the send, and `ember gain` reports the cold writes you paid for across sessions.
 
 A port of [`cache-tax`](https://github.com/karanb192/claude-code-mods/tree/main/plugins/cache-tax)
 to [opencode](https://opencode.ai). One self-contained plugin file, no runtime
 dependencies.
 
-> **Looking for cache warming?** OpenCode V2 supports
-> [session warming out of the box](https://opencode.ai/v2/docs/warming/),
-> without a plugin. Check its built-in `warming` setting first. It is disabled
-> by default, and warming requests can incur provider costs.
+**Install:** clone the repo, run `./install.sh`, and restart opencode
+([details](#install)).
 
 > Why "ember": a banked fire you keep smoldering while you are away.
 
 ## What it does
 
-- **Keepwarm does not currently warm caches.** `/keepwarm` arms a timer, but
-  its callback stops with `"no supported captured model request is available"`.
-  It never sends a background provider request or mutates sessions or provider config.
 - **`/ember guard warn` (default) shows the price and sends anyway.** When the TTL has
   lapsed and the context is large, a graceful warning is shown while the message sends.
   `/ember guard refuse` hard blocks cold sends and shows an informative error in the turn,
@@ -41,6 +37,14 @@ dependencies.
   includes cold-write counts and estimated costs, plus any stored heartbeat history.
   Totals cover all retained buckets; the per-day table shows only the most recent days.
   `ember discover` is an alias; `ember gain --json` dumps the raw buckets.
+- **Keepwarm does not currently warm caches.** `/keepwarm` arms a timer, but
+  its callback stops with `"no supported captured model request is available"`.
+  It never sends a background provider request or mutates sessions or provider config.
+
+> **Looking for cache warming?** OpenCode V2 supports
+> [session warming out of the box](https://opencode.ai/v2/docs/warming/),
+> without a plugin. Check its built-in `warming` setting first. It is disabled
+> by default, and warming requests can incur provider costs.
 
 ## Requirements
 
@@ -242,6 +246,12 @@ and `dispose` (clears timers).
 Ported from [`karanb192/claude-code-mods` → `cache-tax`](https://github.com/karanb192/claude-code-mods/tree/main/plugins/cache-tax).
 The design, the price arithmetic and the safety rules are theirs; this is the
 opencode translation.
+
+## More OpenCode plugins
+
+- [sesh](https://github.com/ozandogrultan/opencode-sesh) — search, preview, and resume every session across every project.
+- [ghost](https://github.com/ozandogrultan/opencode-ghost) — suggests your next prompt as ghost text in the empty composer.
+- [quill](https://github.com/ozandogrultan/opencode-quill) — local word completion and next-word prediction as you type.
 
 ## Contributing
 
