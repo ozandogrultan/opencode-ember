@@ -7,7 +7,7 @@
 // as heartbeat history from earlier versions, are left in the file and ignored.
 //
 // All dollar figures are ESTIMATES built from the same hard-coded price table
-// the plugin uses (`PRICES` in ember.ts). Models without a matching price row
+// the plugin uses (`PRICES` in src/core.ts). Models without a matching price row
 // report $0.00 and understate the cost column; cold-write counts stay
 // accurate. Delete the state file to reset history.
 import { readFileSync } from "node:fs"

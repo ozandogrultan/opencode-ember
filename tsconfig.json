@@ -4,11 +4,12 @@
     "lib": ["ESNext"],
     "module": "ESNext",
     "moduleResolution": "bundler",
+    "allowImportingTsExtensions": true,
     "types": ["node"],
     "strict": true,
     "noEmit": true,
     "skipLibCheck": true,
     "forceConsistentCasingInFileNames": true
   },
-  "include": ["ember.ts", "gain.ts"]
+  "include": ["ember.ts", "src", "gain.ts"]
 }

@@ -28,13 +28,15 @@
   ],
   "main": "ember.ts",
   "exports": {
-    ".": "./ember.ts"
+    ".": "./ember.ts",
+    "./tui": "./src/tui.ts"
   },
   "bin": {
     "ember": "gain.ts"
   },
   "files": [
     "ember.ts",
+    "src",
     "gain.ts",
     "CHANGELOG.md",
     "README.md",
@@ -45,7 +47,7 @@
   },
   "packageManager": "bun@1.4.2",
   "engines": {
-    "opencode": ">=1.18.0"
+    "opencode": ">=1.18.29 <2 || >=2.1.4 <3"
   },
   "scripts": {
     "prepare": "husky",
@@ -58,14 +60,23 @@
     "prepublishOnly": "bun run test && bun run typecheck"
   },
   "peerDependencies": {
-    "@opencode-ai/plugin": "*"
+    "@opencode-ai/plugin": "*",
+    "@opencode/plugin": "*"
+  },
+  "peerDependenciesMeta": {
+    "@opencode-ai/plugin": { "optional": true },
+    "@opencode/plugin": { "optional": true }
   },
   "devDependencies": {
     "@commitlint/cli": "^21.2.2",
     "@commitlint/config-conventional": "^21.2.2",
     "@opencode-ai/plugin": "1.19.3",
+    "@opencode/plugin": "2.1.4",
+    "@opentui/core": "^0.6.6",
+    "@opentui/solid": "^0.6.6",
     "@types/node": "26.6.5",
     "husky": "^9.1.7",
+    "solid-js": "1.9.12",
     "typescript": "7.0.2"
   }
 }

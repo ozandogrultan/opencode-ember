@@ -1,5 +1,8 @@
 import { describe, expect, it } from "bun:test"
 import { render, fmtUsd, main } from "../gain"
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs"
+import { tmpdir } from "node:os"
+import { join } from "node:path"
 
 const days = {
   "2026-09-20": { pings: 120, read: 60_000_000, pingUsd: 0.6, keptUsd: 6, colds: 4, coldUsd: 2, warmMs: 480_000 },
@@ -36,8 +39,18 @@ describe("ember gain CLI", () => {
   })
 
   it("main() exits 0 on gain and discover, 1 on unknown subcommands", () => {
-    expect(main(["discover"])).toBe(0)
-    expect(main(["gain"])).toBe(0)
-    expect(main(["nope"])).toBe(1)
+    const dir = mkdtempSync(join(tmpdir(), "ember-gain-"))
+    const previous = process.env.EMBER_STATE_FILE
+    process.env.EMBER_STATE_FILE = join(dir, "state.json")
+    writeFileSync(process.env.EMBER_STATE_FILE, JSON.stringify({ version: 3, days }))
+    try {
+      expect(main(["discover"])).toBe(0)
+      expect(main(["gain"])).toBe(0)
+      expect(main(["nope"])).toBe(1)
+    } finally {
+      if (previous === undefined) delete process.env.EMBER_STATE_FILE
+      else process.env.EMBER_STATE_FILE = previous
+      rmSync(dir, { recursive: true, force: true })
+    }
   })
 })
