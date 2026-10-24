@@ -1,6 +1,6 @@
 {
   "name": "opencode-ember",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "OpenCode prompt-cache cost guard: estimates cold cache-rewrite costs, warns or blocks before expensive sends, and reports recorded costs across sessions.",
   "type": "module",
   "license": "MIT",
@@ -64,8 +64,12 @@
     "@opencode/plugin": "*"
   },
   "peerDependenciesMeta": {
-    "@opencode-ai/plugin": { "optional": true },
-    "@opencode/plugin": { "optional": true }
+    "@opencode-ai/plugin": {
+      "optional": true
+    },
+    "@opencode/plugin": {
+      "optional": true
+    }
   },
   "devDependencies": {
     "@commitlint/cli": "^21.2.2",

@@ -5,6 +5,12 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.1.0] - 2026-10-24
+
+### Added
+
+- Support OpenCode V2 while preserving V1 compatibility
+
 ## [1.0.0] - 2026-10-24
 
 ### Breaking changes
@@ -86,6 +92,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   configurable TTL and ping period, and a shared state file that merges safely
   across opencode processes.
 
+[1.1.0]: https://github.com/ozandogrultan/opencode-ember/compare/v1.0.0...v1.1.0
 [1.0.0]: https://github.com/ozandogrultan/opencode-ember/compare/v0.4.3...v1.0.0
 [0.4.3]: https://github.com/ozandogrultan/opencode-ember/compare/v0.4.2...v0.4.3
 [0.4.2]: https://github.com/ozandogrultan/opencode-ember/compare/v0.4.1...v0.4.2
