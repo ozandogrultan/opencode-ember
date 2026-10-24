@@ -36,9 +36,8 @@ the publishable tarball, and commit messages in addition to the tests and typech
 - Keep PRs focused. One concern per PR, with a clear description of the *why*.
 - Match the surrounding style. TypeScript is formatted by hand; no formatter is
   enforced.
-- Keep background warming fail-closed: never fork, prompt, delete, or append
-  to a session, mutate provider config, or wrap provider `options.fetch`.
-  The current timer stops without issuing background provider requests.
+- Never fork, prompt, delete, or append to a session, mutate provider config,
+  or wrap provider `options.fetch`, and start no timers or background requests.
 - Dollar figures are hard-coded estimates. An unpriced model must read `$0.00`
   and leave the raw counters accurate.
 - New behaviour should come with a test in `test/` where practical.

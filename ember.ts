@@ -4,13 +4,8 @@ import { homedir } from "node:os"
 import { dirname, join } from "node:path"
 
 const DEFAULT_TTL_MS = envSeconds("EMBER_TTL_SECONDS") ?? 5 * 60 * 1000
-const DEFAULT_WINDOW_MS = 30 * 60 * 1000
-const AUTO_WARM_MS = DEFAULT_WINDOW_MS
 const STORE_VERSION = 3
 const BIG_TOKENS = envNumber("EMBER_MIN_CONTEXT") ?? 50_000
-const MIN_PING_MS = (envNumber("EMBER_MIN_PING_SECONDS") ?? 60) * 1000
-const STOP_NOTICE_MS = 5_000
-const STALE_MS = 24 * 60 * 60 * 1000
 const GAIN_RETENTION_DAYS = 90
 
 function stateFilePath(): string {
@@ -52,16 +47,13 @@ const PRICES: Array<[string, number, number, number]> = [
 
 type ModelRef = { providerID: string; modelID: string }
 type GuardMode = "refuse" | "warn"
-type Ping = { at: number; read: number; write: number; usd: number | null; warm: boolean }
 type Miss = { at: number; tokens: number; usd: number | null }
 
 type Session = {
   id: string
   ctx: number
   ttl: number
-  every: number
   lastModel: ModelRef | null
-  lastAgent: string | null
   lastRequestAt: number
   compacted: boolean
   hydrating: boolean
@@ -69,32 +61,19 @@ type Session = {
   blocked: string | null
   pendingColdWrite: boolean
   misses: Miss[]
-  deadline: number
-  continuous: boolean
-  stopped: string | null
-  lastPing: Ping | null
-  pinging: boolean
-  timer: ReturnType<typeof setTimeout> | null
-  stumble: number
-  tail: number
 }
 
 type Store = {
   version: number
   guard: GuardMode
-  always: boolean
-  sessions: Record<string, { deadline: number; every: number; ttl?: number; continuous?: boolean }>
   days: Record<string, Day>
+  [key: string]: unknown
 }
 
 type Day = {
-  pings: number
-  read: number
-  pingUsd: number
-  keptUsd: number
   colds: number
   coldUsd: number
-  warmMs: number
+  [key: string]: unknown
 }
 
 function envNumber(name: string): number | null {
@@ -107,10 +86,6 @@ function envNumber(name: string): number | null {
 function envSeconds(name: string): number | null {
   const seconds = envNumber(name)
   return seconds == null ? null : seconds * 1000
-}
-
-function everyFor(ttl: number): number {
-  return Math.max(MIN_PING_MS, Math.round(ttl * 0.8))
 }
 
 function priceOf(model: ModelRef | null): [number, number, number] | null {
@@ -148,44 +123,23 @@ function fmtUsd(n: number | null): string {
   return "$0.00"
 }
 
-export function parseDuration(raw: string): number | null {
-  const s = raw.trim()
-  const m = s.match(/^(?:(\d+)h)?(?:(\d+)m)?(?:(\d+)s)?$/i)
-  if (!m || (!m[1] && !m[2] && !m[3])) return null
-  const h = Number(m[1] ?? 0)
-  const min = Number(m[2] ?? 0)
-  const sec = Number(m[3] ?? 0)
-  return (h * 3600 + min * 60 + sec) * 1000
-}
-
 function cleanDay(raw: unknown): Day {
   const d = (raw && typeof raw === "object" ? raw : {}) as Record<string, unknown>
-  return {
-    pings: Number(d.pings) || 0,
-    read: Number(d.read) || 0,
-    pingUsd: Number(d.pingUsd) || 0,
-    keptUsd: Number(d.keptUsd) || 0,
-    colds: Number(d.colds) || 0,
-    coldUsd: Number(d.coldUsd) || 0,
-    warmMs: Number(d.warmMs) || 0,
-  }
+  return { ...d, colds: Number(d.colds) || 0, coldUsd: Number(d.coldUsd) || 0 }
 }
 
 function readStore(): Store {
   try {
-    const file = stateFilePath()
-    const parsed = JSON.parse(readFileSync(file, "utf8"))
-    if (!parsed || typeof parsed !== "object") throw new Error("corrupt store")
-    const isV3 = parsed.version === STORE_VERSION
+    const parsed = JSON.parse(readFileSync(stateFilePath(), "utf8"))
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) throw new Error("corrupt store")
     return {
+      ...parsed,
       version: STORE_VERSION,
       guard: parsed.guard === "refuse" ? "refuse" : "warn",
-      always: isV3 && parsed.always === true,
-      sessions: isV3 && parsed.sessions && typeof parsed.sessions === "object" ? parsed.sessions : {},
       days: parsed.days && typeof parsed.days === "object" ? parsed.days : {},
     }
   } catch {
-    return { version: STORE_VERSION, guard: "warn", always: false, sessions: {}, days: {} }
+    return { version: STORE_VERSION, guard: "warn", days: {} }
   }
 }
 
@@ -225,12 +179,6 @@ function writeStore(apply?: (store: Store) => void): void {
     mkdirSync(dirname(file), { recursive: true })
     withLock(file, () => {
       const fresh = readStore()
-      const now = Date.now()
-      for (const [id, sess] of Object.entries(fresh.sessions)) {
-        if (sess.deadline && sess.deadline < now - STALE_MS) {
-          delete fresh.sessions[id]
-        }
-      }
       const dayKeys = Object.keys(fresh.days).sort()
       while (dayKeys.length > GAIN_RETENTION_DAYS) {
         delete fresh.days[dayKeys.shift()!]
@@ -241,7 +189,7 @@ function writeStore(apply?: (store: Store) => void): void {
       renameSync(tmp, file)
     })
   } catch {
-    // a failed write only costs us a restored window, never the conversation
+    // a failed write only drops a history entry, never the conversation
   }
 }
 
@@ -253,14 +201,11 @@ export const EmberPlugin: Plugin = async ({ client }) => {
   const state = (id: string): Session => {
     const existing = sessions.get(id)
     if (existing) return existing
-    const persisted = store.sessions[id]
     const s: Session = {
       id,
       ctx: 0,
-      ttl: persisted?.ttl ?? DEFAULT_TTL_MS,
-      every: persisted?.every ?? everyFor(persisted?.ttl ?? DEFAULT_TTL_MS),
+      ttl: DEFAULT_TTL_MS,
       lastModel: null,
-      lastAgent: null,
       lastRequestAt: 0,
       compacted: false,
       hydrating: false,
@@ -268,14 +213,6 @@ export const EmberPlugin: Plugin = async ({ client }) => {
       blocked: null,
       pendingColdWrite: false,
       misses: [],
-      deadline: persisted?.deadline ?? 0,
-      continuous: persisted?.continuous ?? false,
-      stopped: null,
-      lastPing: null,
-      pinging: false,
-      timer: null,
-      stumble: 0,
-      tail: 0,
     }
     sessions.set(id, s)
     return s
@@ -283,85 +220,16 @@ export const EmberPlugin: Plugin = async ({ client }) => {
 
   const refreshSettings = () => {
     const fresh = readStore()
-    store.always = fresh.always
     store.guard = fresh.guard
-  }
-
-  const persistSession = (s: Session) => {
-    writeStore((fresh) => {
-      if (!s.deadline) {
-        delete fresh.sessions[s.id]
-      } else {
-        fresh.sessions[s.id] = { deadline: s.deadline, every: s.every, ttl: s.ttl, continuous: s.continuous }
-      }
-    })
   }
 
   const recordHistory = (apply: (day: Day) => void) => {
     const key = new Date().toISOString().slice(0, 10)
     writeStore((fresh) => {
-      const day = fresh.days[key] ? cleanDay(fresh.days[key]) : { pings: 0, read: 0, pingUsd: 0, keptUsd: 0, colds: 0, coldUsd: 0, warmMs: 0 }
+      const day = cleanDay(fresh.days[key])
       apply(day)
       fresh.days[key] = day
     })
-  }
-
-  const clearTimer = (s: Session) => {
-    if (s.timer) clearTimeout(s.timer)
-    s.timer = null
-  }
-
-  const stoppedText = (s: Session): string | undefined => {
-    if (s.stopped) return s.stopped
-    if (!s.deadline) return undefined
-    const left = fmtDuration(s.deadline - Date.now())
-    const next = s.lastRequestAt ? ` · timer fires in ${fmtDuration(s.lastRequestAt + s.every - Date.now())}` : " · waiting for the first turn"
-    const ping = s.lastPing ? ` · last ping read ${fmtTok(s.lastPing.read)} ${fmtUsd(s.lastPing.usd)}` : ""
-    return `keepwarm ${s.continuous ? "always" : `${left} left`}${next}${ping}`
-  }
-
-  const stop = (s: Session, why: string | null) => {
-    clearTimer(s)
-    s.deadline = 0
-    s.continuous = false
-    s.stopped = why
-    s.lastPing = why ? s.lastPing : null
-    persistSession(s)
-  }
-
-  const schedule = (s: Session) => {
-    clearTimer(s)
-    if (!s.deadline) return
-    const now = Date.now()
-    if (now >= s.deadline) {
-      if (s.continuous) {
-        s.deadline = now + DEFAULT_WINDOW_MS
-        persistSession(s)
-      } else {
-        return stop(s, null)
-      }
-    }
-    if (s.lastRequestAt && now >= s.lastRequestAt + s.ttl) return
-    const base = s.lastRequestAt || now
-    const delay = Math.max(1000, Math.min(base + s.every - now, s.deadline - now))
-    s.timer = setTimeout(() => void ping(s), delay)
-  }
-
-  const arm = (s: Session, windowMs?: number, ttl?: number, continuous = false) => {
-    if (ttl) s.ttl = ttl
-    s.every = everyFor(s.ttl)
-    if (windowMs) s.deadline = Date.now() + windowMs
-    if (!s.deadline) return
-    s.continuous = continuous
-    s.stopped = null
-    schedule(s)
-    persistSession(s)
-  }
-
-  const ping = async (s: Session) => {
-    clearTimer(s)
-    if (!s.deadline || (Date.now() >= s.deadline && !s.continuous)) return stop(s, null)
-    stop(s, "no supported captured model request is available")
   }
 
   const coldUsd = (s: Session): number | null => {
@@ -390,19 +258,11 @@ export const EmberPlugin: Plugin = async ({ client }) => {
     )
   }
 
-  const breakEven = (s: Session): string => {
-    const price = priceOf(s.lastModel)
-    if (!price || s.ctx <= 0) return "break-even: unknown"
-    const pings = Math.floor(price[1] / price[0])
-    return `break-even: ${pings} pings ≈ 1 cold write (${fmtDuration(pings * s.every)} idle)`
-  }
-
   const card = (s: Session): string => {
     const warm = !isCold(s)
     const lines = [
       `ember: ${warm ? "warm" : "cold"} · context ${fmtTok(s.ctx)} · TTL ${fmtDuration(s.ttl)}`,
-      `cold rewrite ${fmtUsd(coldUsd(s))} · ${breakEven(s)}`,
-      `keepwarm: ${stoppedText(s) ?? "off"}`,
+      `cold rewrite ${fmtUsd(coldUsd(s))}`,
       `guard: ${store.guard}`,
       `cold writes this session: ${s.misses.length}${
         s.misses.length ? ` — ${fmtUsd(s.misses.reduce((a, m) => a + (m.usd ?? 0), 0))}` : ""
@@ -431,14 +291,12 @@ export const EmberPlugin: Plugin = async ({ client }) => {
         if (info.error || !info.tokens || (info.tokens.input === 0 && info.tokens.cache.read === 0 && info.tokens.cache.write === 0)) continue
         s.lastModel = { providerID: info.providerID, modelID: info.modelID }
         s.ctx = info.tokens.input + info.tokens.cache.read + info.tokens.cache.write
-        s.tail = info.tokens.output + (info.tokens.reasoning ?? 0)
         s.lastRequestAt = info.time.completed ?? info.time.created
         break
       }
       for (let i = list.length - 1; i >= 0; i--) {
         const info = list[i].info
         if (info.role !== "user") continue
-        s.lastAgent = info.agent
         if (!s.lastModel) s.lastModel = info.model
         break
       }
@@ -462,115 +320,33 @@ export const EmberPlugin: Plugin = async ({ client }) => {
       .trim()
   }
 
-  const handleCommand = (sessionID: string, raw: string): { text: string; keepwarm: boolean } => {
-    refreshSettings()
-    const s = state(sessionID)
-    const args = raw.trim()
-    const [head, ...rest] = args.split(/\s+/)
-    const sub = (head ?? "").toLowerCase()
-
-    if (sub === "status") return { text: stoppedText(s) ?? "keepwarm off", keepwarm: true }
-
-    if (sub === "off") {
-      stop(s, null)
-      s.stopped = null
-      store.always = false
-      writeStore((fresh) => {
-        fresh.always = false
-      })
-      return { text: "keepwarm off · always off", keepwarm: true }
-    }
-
-    if (sub === "always") {
-      store.always = true
-      writeStore((fresh) => {
-        fresh.always = true
-      })
-      arm(s, DEFAULT_WINDOW_MS, undefined, true)
-      return { text: "keepwarm always on for this and future sessions", keepwarm: true }
-    }
-
-    // <dur> [every <dur>] [ttl <dur>]
-    let window = DEFAULT_WINDOW_MS
-    if (sub) {
-      const parsed = parseDuration(sub)
-      if (!parsed) return { text: usage(), keepwarm: true }
-      window = parsed
-    }
-    let ttl: number | undefined
-    let every: number | undefined
-    for (let i = 0; i < rest.length; i++) {
-      const token = rest[i].toLowerCase()
-      const value = rest[i + 1] ? parseDuration(rest[i + 1]) : null
-      if (token === "every" && value) {
-        every = Math.max(MIN_PING_MS, value)
-        i++
-      } else if (token === "ttl" && value) {
-        ttl = value
-        i++
-      }
-    }
-    // A plain /keepwarm refreshes the always-on session; only an explicit
-    // duration opts this session into a bounded window.
-    arm(s, window, ttl, !sub && store.always)
-    if (every) {
-      s.every = every
-      schedule(s)
-      persistSession(s)
-    }
-    return { text: stoppedText(s) ?? `keepwarm armed for ${fmtDuration(window)}`, keepwarm: true }
-  }
-
-  const usage = (): string =>
-    [
-      "/keepwarm                 arm the timer for the default window",
-      "/keepwarm 90m             a window of your own (also 2h30m, 6h)",
-      "/keepwarm always          arm this and future sessions automatically",
-      "/keepwarm 6h every 2m     override the ping period (floor 1m)",
-      "/keepwarm 6h ttl 1h       assume the 1-hour cache tier",
-      "/keepwarm status          the status line",
-      "/keepwarm off             stop, forget the window, turn always off",
-      "/ember                    the card",
-      "/ember guard warn         show the price and send (default)",
-      "/ember guard refuse       hard block cold sends",
-    ].join("\n")
-
   return {
     config: async (input) => {
       const command = (input.command ??= {}) as Record<string, { description?: string; template: string }>
-      if (!command.keepwarm)
-        command.keepwarm = { description: "Arm the keepwarm timer for this session", template: "keepwarm" }
       if (!command["ember"])
         command["ember"] = { description: "Show the prompt-cache cost card", template: "ember" }
     },
 
     "command.execute.before": async (input, output) => {
-      if (input.command !== "keepwarm" && input.command !== "ember") return
+      if (input.command !== "ember") return
       let message: string
-      if (input.command === "keepwarm") {
-        message = handleCommand(input.sessionID, input.arguments ?? "").text
-      } else {
-        const s = state(input.sessionID)
-        const parts = (input.arguments ?? "").trim().split(/\s+/)
-        if (parts[0]?.toLowerCase() === "guard") {
-          const mode = parts[1]?.toLowerCase()
-          if (mode === "warn" || mode === "refuse" || mode === "block") {
-            store.guard = mode === "block" ? "refuse" : (mode as GuardMode)
-            writeStore((fresh) => {
-              fresh.guard = store.guard
-            })
-            message = `ember guard ${store.guard}`
-          } else {
-            message = "usage: /ember guard warn|refuse"
-          }
+      const parts = (input.arguments ?? "").trim().split(/\s+/)
+      const sub = parts[0]?.toLowerCase()
+      if (sub === "guard") {
+        const mode = parts[1]?.toLowerCase()
+        if (mode === "warn" || mode === "refuse" || mode === "block") {
+          store.guard = mode === "block" ? "refuse" : (mode as GuardMode)
+          writeStore((fresh) => {
+            fresh.guard = store.guard
+          })
+          message = `ember guard ${store.guard}`
         } else {
-          const sub = parts[0]?.toLowerCase()
-          if (sub === "gain" || sub === "discover") {
-            message = "ember gain moved to a terminal binary — run `ember gain` in a shell"
-          } else {
-            message = card(s)
-          }
+          message = "usage: /ember guard warn|refuse"
         }
+      } else if (sub === "gain" || sub === "discover") {
+        message = "ember gain moved to a terminal binary — run `ember gain` in a shell"
+      } else {
+        message = card(state(input.sessionID))
       }
       // The command text is never sent to the model: the toast carries the
       // result, and throwing stops opencode before it builds a prompt.
@@ -596,8 +372,6 @@ export const EmberPlugin: Plugin = async ({ client }) => {
       if (text.startsWith("/")) return
 
       if (!s.hydrated) await hydrate(s)
-
-      if (store.always && !s.deadline) arm(s, DEFAULT_WINDOW_MS, undefined, true)
 
       const cold = isCold(s) && s.ctx >= BIG_TOKENS
       if (!cold) return
@@ -632,7 +406,6 @@ export const EmberPlugin: Plugin = async ({ client }) => {
             if (info.role === "user") {
               const s = sessions.get(info.sessionID)
               if (s) {
-                s.lastAgent = info.agent
                 s.lastModel = info.model
               }
             }
@@ -646,15 +419,11 @@ export const EmberPlugin: Plugin = async ({ client }) => {
             s.compacted = false
             s.lastRequestAt = Date.now()
             s.ctx = part.tokens.input + part.tokens.cache.read + part.tokens.cache.write
-            s.tail = part.tokens.output + (part.tokens.reasoning ?? 0)
-            s.stopped = null
-            if (store.always && !s.deadline) arm(s, AUTO_WARM_MS, undefined, true)
             if (s.pendingColdWrite) {
               if (part.tokens.cache.write > 0) {
                 const price = priceOf(s.lastModel)
                 const usd = price ? (part.tokens.cache.write * price[1]) / 1e6 : null
                 s.misses.push({ at: Date.now(), tokens: part.tokens.cache.write, usd })
-                if (!s.deadline) arm(s, AUTO_WARM_MS, undefined, store.always)
                 recordHistory((d) => {
                   d.colds++
                   d.coldUsd += usd ?? 0
@@ -664,38 +433,11 @@ export const EmberPlugin: Plugin = async ({ client }) => {
             }
             break
           }
-          case "session.idle": {
-            const id = event.properties.sessionID
-            let s = sessions.get(id)
-            if (!s) {
-              if (helperSessions.has(id)) break
-              const persisted = readStore().sessions[id]
-              if (!persisted || !persisted.deadline || Date.now() >= persisted.deadline) break
-              const info = client.session.get ? await client.session.get({ path: { id } }).catch(() => undefined) : undefined
-              if (info?.data?.parentID) {
-                helperSessions.add(id)
-                writeStore((fresh) => {
-                  delete fresh.sessions[id]
-                })
-                break
-              }
-              store.sessions[id] = persisted
-              s = state(id)
-              await hydrate(s)
-            }
-            if (s.deadline && !s.stopped && Date.now() < s.deadline) {
-              schedule(s)
-            }
-            break
-          }
           case "session.compacted": {
             const s = sessions.get(event.properties.sessionID)
             if (!s) break
-            // Compaction rewrites the prefix; pinging is pointless until the
-            // next real turn re-establishes a cache entry.
             s.compacted = true
             s.ctx = 0
-            clearTimer(s)
             break
           }
           case "message.removed": {
@@ -707,27 +449,18 @@ export const EmberPlugin: Plugin = async ({ client }) => {
             s.pendingColdWrite = false
             s.blocked = null
             s.misses = []
-            stop(s, null)
             break
           }
           case "session.deleted": {
             const s = sessions.get(event.properties.info.id)
             if (!s) break
-            clearTimer(s)
             sessions.delete(s.id)
-            writeStore((fresh) => {
-              delete fresh.sessions[s.id]
-            })
             break
           }
         }
       } catch {
         // a broken event must never take the session down
       }
-    },
-
-    dispose: async () => {
-      for (const s of sessions.values()) clearTimer(s)
     },
   }
 }
