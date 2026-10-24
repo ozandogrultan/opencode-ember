@@ -37,6 +37,7 @@ const PRICES: Array<[string, number, number, number]> = [
 export type ModelRef = { providerID: string; modelID: string }
 export type Price = readonly [read: number, write: number, output: number]
 export type GuardMode = "refuse" | "warn"
+export const GUARD_SAVE_ERROR = "ember: could not save guard settings. Cold sends are refused in this process only; other processes and restarts may use different settings. Fix state-file access and retry /ember guard warn|refuse."
 export type Miss = { at: number; tokens: number; usd: number | null }
 
 export type Session = {

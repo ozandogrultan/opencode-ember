@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test"
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs"
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import plugin, { EmberPlugin } from "../ember.ts"
@@ -76,5 +76,33 @@ describe("V1 compatibility", () => {
     const h = await v1Harness("parent")
     await h.send()
     expect(h.toasts).toEqual([])
+  })
+  for (const mode of ["refuse", "warn"] as const) {
+    it(`reports failed ${mode} saves without silently reverting to warn`, async () => {
+      const original = JSON.stringify({ version: 3, guard: mode === "refuse" ? "warn" : "refuse", days: {} })
+      writeFileSync(file, original)
+      const h = await v1Harness()
+      const blocked = `${file}.${process.pid}.tmp`
+      mkdirSync(blocked)
+      await h.command(`guard ${mode}`)
+      expect(h.toasts.at(-1).variant).toBe("error")
+      expect(h.toasts.at(-1).message).toContain("could not save guard settings")
+      await h.command()
+      expect(h.toasts.at(-1).variant).toBe("error")
+      expect(h.toasts.at(-1).message).not.toContain("cold rewrite")
+      await expect(h.send()).rejects.toThrow("Prompt blocked by ember guard refuse")
+      expect(readFileSync(file, "utf8")).toBe(original)
+      rmSync(blocked, { recursive: true })
+      await h.command("guard warn")
+      expect(h.toasts.at(-1).message).toBe("ember guard warn")
+      await expect(h.send()).resolves.toBeUndefined()
+    })
+  }
+  it("does not fail a normal conversation when history cannot be saved", async () => {
+    const h = await v1Harness()
+    mkdirSync(`${file}.${process.pid}.tmp`)
+    await expect(h.send()).resolves.toBeUndefined()
+    await expect(h.step()).resolves.toBeUndefined()
+    expect(existsSync(file)).toBe(false)
   })
 })

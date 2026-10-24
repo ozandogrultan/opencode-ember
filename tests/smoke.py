@@ -9,6 +9,7 @@ from pathlib import Path
 import pty
 import re
 import select
+import shutil
 import struct
 import subprocess
 import tarfile
@@ -20,6 +21,8 @@ import time
 parser = argparse.ArgumentParser()
 parser.add_argument("--v1", required=True)
 parser.add_argument("--v2", default="opencode")
+parser.add_argument("--install", action="store_true")
+parser.add_argument("--legacy-registry", action="store_true")
 args = parser.parse_args()
 repo = Path(__file__).resolve().parent.parent
 root = Path(tempfile.mkdtemp(prefix="ember-dual-smoke-"))
@@ -117,14 +120,43 @@ try:
             PWD=str(directory / "work"),
             TERM="xterm-256color",
         )
+        registry = "plugin" if major == 1 or args.legacy_registry else "plugins"
+        registrations = []
+        expected = []
+        for name, options in [
+            ("auth-string", {}),
+            ("auth-options", {"nested": {"keep": [1, 2]}}),
+        ]:
+            fixture = directory / name
+            fixture.mkdir()
+            (fixture / "package.json").write_text(
+                json.dumps({"name": name, "type": "module", "main": "index.ts"})
+            )
+            (fixture / "index.ts").write_text(
+                'import { appendFileSync } from "node:fs"\n'
+                f'const log = (options) => appendFileSync(process.env.EMBER_REGISTRY_LOG, JSON.stringify({{id: {json.dumps(name)}, options: options ?? {{}}}}) + "\\n")\n'
+                f'export default {{ id: "smoke.{name}", async server(_ctx, options) {{ log(options); return {{}} }}, setup(ctx) {{ log(ctx.options) }} }}\n'
+            )
+            registrations.append(
+                str(fixture)
+                if not options
+                else [str(fixture), options]
+                if registry == "plugin"
+                else {"package": str(fixture), "options": options}
+            )
+            expected.append({"id": name, "options": options})
+        env["EMBER_REGISTRY_LOG"] = str(directory / "registrations.jsonl")
         config = {
             "model": "mock/claude-haiku-4.5",
             "autoupdate": False,
             "share": "disabled",
             "enabled_providers": ["mock"],
-            "plugin" if major == 1 else "plugins": [
-                f"opencode-ember@file:{root / pack['filename']}"
-            ],
+            registry: registrations
+            + (
+                []
+                if args.install
+                else [f"opencode-ember@file:{root / pack['filename']}"]
+            ),
             "provider": {
                 "mock": {
                     "npm": "@ai-sdk/anthropic",
@@ -143,6 +175,28 @@ try:
             },
         }
         (directory / "cfg" / "opencode.json").write_text(json.dumps(config))
+
+        def install_config():
+            shim = directory / "bin"
+            shim.mkdir()
+            (shim / "opencode").symlink_to(shutil.which(binary))
+            env["PATH"] = str(shim) + os.pathsep + env["PATH"]
+            env["EMBER_BIN_DIR"] = str(directory / "ember-bin")
+            result = subprocess.run(
+                ["bash", str(repo / "install.sh"), str(directory / "cfg")],
+                env=env,
+                cwd=directory / "work",
+                capture_output=True,
+                text=True,
+                timeout=30,
+            )
+            (directory / "install.out").write_text(result.stdout + result.stderr)
+            assert result.returncode == 0, result.stderr
+            installed = json.loads((directory / "cfg" / "opencode.json").read_text())
+            assert installed[registry][: len(registrations)] == registrations
+            if registry == "plugin":
+                assert "plugins" not in installed
+
         today = time.strftime("%Y-%m-%d", time.gmtime())
         state = directory / "ember.json"
         state.write_text(
@@ -182,8 +236,21 @@ try:
             subprocess.check_output([binary, "--version"], text=True).strip(),
             flush=True,
         )
+        assert '"text":"pong"' in run("registry-baseline", ["registry probe"])
+        registry_log = directory / "registrations.jsonl"
+        baseline = [json.loads(line) for line in registry_log.read_text().splitlines()]
+        assert baseline and len(baseline) % len(expected) == 0
+        assert baseline == expected * (len(baseline) // len(expected)), baseline
+        registry_log.write_text("")
+        if args.install:
+            install_config()
         output = run("seed", ["ping"])
         assert '"text":"pong"' in output, output
+        loaded = [
+            json.loads(line)
+            for line in (directory / "registrations.jsonl").read_text().splitlines()
+        ]
+        assert loaded == baseline, (baseline, loaded)
         session = next(
             json.loads(line)["sessionID"]
             for line in output.splitlines()
@@ -223,7 +290,7 @@ try:
         )
         (directory / "gain.out").write_text(gain.stdout + gain.stderr)
         assert gain.returncode == 0 and '"colds": 1' in gain.stdout, gain.stdout
-        if major == 2:
+        if major == 2 and not args.install:
             (directory / "cfg" / "cli.json").write_text(
                 json.dumps(
                     {"plugins": [f"opencode-ember@file:{root / pack['filename']}"]}
@@ -283,7 +350,7 @@ try:
             assert "Sending anyway" in text, f"V{major} warning toast missing"
             assert json.loads(state.read_text())["days"][today]["colds"] == 2
         print(
-            f"PASS V{major}: packaged loader, warn, refuse (zero calls), card, cold write, gain, legacy fields",
+            f"PASS V{major}: {'installer' if args.install else 'packaged loader'}, registries/options retained, warn, refuse (zero calls), card, cold write, gain, legacy fields",
             flush=True,
         )
 finally:

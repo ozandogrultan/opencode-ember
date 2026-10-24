@@ -42,7 +42,7 @@ no runtime dependencies.
 
 ## Requirements
 
-- [opencode](https://opencode.ai) **V1 1.18.29+ or V2 2.1.4+** (see
+- [opencode](https://opencode.ai) **V1 1.18.0+ or V2 2.1.4+** (see
   `engines.opencode` in [package.json](package.json)). Both use the same package.
 - A provider with prefix caching and reported token usage. Prices come from the
   rates OpenCode reports for the model when it has a cache-write price, otherwise
@@ -72,6 +72,10 @@ config it cannot parse as plain JSON is left untouched, and the V1
 `plugins/ember.ts` is removed when upgrading to V2.
 On V1 it installs `plugins/ember.ts` for auto-discovery with its supporting
 modules in `<config>/ember/`; existing config files are not modified.
+An existing legacy server `plugin` registry stays in that format, including tuple
+options. Config updates are staged and atomically replaced; originals remain in
+the printed `.ember-install-*` recovery directory. A failed second replacement
+rolls back the first.
 
 It also links the report binary as `~/.local/bin/ember` (set `EMBER_BIN_DIR` to
 choose another directory), so `ember gain` works from any shell if that
@@ -119,6 +123,9 @@ ember gain | discover [--json]     # the report, from any shell
 the session. `guard block` is an alias for `guard refuse`.
 
 Guard mode is persisted globally and shared across sessions and processes.
+If saving fails, ember reports an error and refuses cold sends in the current
+process until a guard command saves successfully. Other processes and restarts
+may still use the previous saved setting.
 
 ## Cache TTL
 

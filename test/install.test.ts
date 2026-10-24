@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test"
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs"
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 
@@ -17,10 +17,10 @@ describe("install.sh", () => {
     chmodSync(file, 0o755)
   }
 
-  const run = async (version = "2.1.4", discover = false) => {
+  const run = async (version = "2.1.4", discover = false, env: Record<string, string> = {}) => {
     fakeOpencode(version)
     const proc = Bun.spawn(["bash", install, ...(discover ? [] : [cfg])], {
-      env: { ...process.env, PATH: `${join(dir, "path")}:${process.env.PATH}`, EMBER_BIN_DIR: bin },
+      env: { ...process.env, PATH: `${join(dir, "path")}:${process.env.PATH}`, EMBER_BIN_DIR: bin, ...env },
       stdout: "pipe",
       stderr: "pipe",
     })
@@ -101,9 +101,66 @@ describe("install.sh", () => {
   })
 
   it("preserves singular V1 plugin entries when installing V2", async () => {
-    writeFileSync(join(cfg, "opencode.json"), JSON.stringify({ plugin: ["other"] }))
+    const plugins = ["auth-plugin", ["options-plugin", { nested: { enabled: true } }]]
+    writeFileSync(join(cfg, "opencode.json"), JSON.stringify({ plugin: plugins }))
     expect((await run()).code).toBe(0)
-    expect(json("opencode.json").plugins).toEqual(["other", "./plugins/ember"])
+    expect(json("opencode.json").plugin).toEqual([...plugins, "./plugins/ember"])
+    expect(json("opencode.json").plugins).toBeUndefined()
+    expect((await run()).code).toBe(0)
+    expect(json("opencode.json").plugin).toEqual([...plugins, "./plugins/ember"])
+  })
+
+  it("leaves both registries and their string, tuple and object options intact", async () => {
+    const legacy = ["auth-plugin", ["legacy", { retain: [1, 2] }], ["./plugins/ember", { keep: true }]]
+    const native = ["native-auth", { package: "native", options: { nested: { keep: true } } }]
+    writeFileSync(join(cfg, "opencode.json"), JSON.stringify({ plugin: legacy, plugins: native }))
+    expect((await run()).code).toBe(0)
+    expect(json("opencode.json")).toEqual({ plugin: legacy, plugins: native })
+  })
+
+  it("never migrates V1 registries, including auth plugin options", async () => {
+    const original = JSON.stringify({ plugin: ["auth-plugin", ["legacy", { keep: true }]], plugins: [{ package: "native", options: { a: 1 } }] })
+    writeFileSync(join(cfg, "opencode.json"), original)
+    expect((await run("1.18.0")).code).toBe(0)
+    expect(readFileSync(join(cfg, "opencode.json"), "utf8")).toBe(original)
+  })
+
+  for (const failure of ["staging", "second replacement"] as const) {
+    it(`keeps both original configs intact after a ${failure} failure`, async () => {
+      const originals = ['{ "plugin": ["auth-plugin", ["other", {"keep": true}]] }\n', '{ "plugins": ["cli-auth"] }\n']
+      for (const [i, file] of ["opencode.json", "cli.json"].entries()) writeFileSync(join(cfg, file), originals[i])
+      const preload = join(dir, "failure.cjs")
+      writeFileSync(preload, `
+        const fs = require("node:fs")
+        const open = fs.openSync, write = fs.writeFileSync, rename = fs.renameSync
+        const files = new Map()
+        fs.openSync = function(file, ...args) { const fd = open.call(this, file, ...args); files.set(fd, String(file)); return fd }
+        fs.writeFileSync = function(file, ...args) {
+          if (${JSON.stringify(failure)} === "staging" && files.get(file)?.endsWith("cli.json.next")) throw new Error("injected disk full")
+          return write.call(this, file, ...args)
+        }
+        fs.renameSync = function(from, to) {
+          if (${JSON.stringify(failure)} === "second replacement" && String(from).endsWith("cli.json.next")) throw new Error("injected rename failure")
+          return rename.call(this, from, to)
+        }
+      `)
+      const result = await run("2.1.4", false, { NODE_OPTIONS: `--require=${preload}` })
+      expect(result.code).toBe(1)
+      expect(result.err).toContain("injected")
+      for (const [i, file] of ["opencode.json", "cli.json"].entries()) expect(readFileSync(join(cfg, file), "utf8")).toBe(originals[i])
+      const recovery = join(cfg, readdirSync(cfg).find((name) => name.startsWith(".ember-install-"))!)
+      expect(readFileSync(join(recovery, "cli.json.original"), "utf8")).toBe(originals[1])
+      if (failure === "staging") expect(existsSync(join(cfg, "plugins"))).toBe(false)
+    })
+  }
+
+  it("retains exact original bytes in recoverable backups after atomic replacements", async () => {
+    const original = '{ "plugins": ["auth-plugin"] }\n'
+    writeFileSync(join(cfg, "opencode.json"), original)
+    expect((await run()).code).toBe(0)
+    const recovery = join(cfg, readdirSync(cfg).find((name) => name.startsWith(".ember-install-"))!)
+    expect(readFileSync(join(recovery, "opencode.json.original"), "utf8")).toBe(original)
+    expect(json("opencode.json").plugins).toEqual(["auth-plugin", "./plugins/ember"])
   })
 
   it("discovers the V1 config path without changing JSON", async () => {

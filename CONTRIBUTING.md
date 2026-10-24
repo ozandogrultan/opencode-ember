@@ -20,6 +20,9 @@ bookkeeping. OpenCode loads the TS source directly.
 against a local mock provider, including terminal toasts. `--v2` selects the V2
 binary. Config, state and caches use a temporary directory printed by the test;
 the smoke test never calls a real provider.
+Use `--install` to verify the local installer instead of the npm entry, and
+`--legacy-registry` to exercise legacy tuple registrations on V2. Unrelated
+plugin initialization order and options are compared against a pre-install baseline.
 
 ## Before you open a PR
 

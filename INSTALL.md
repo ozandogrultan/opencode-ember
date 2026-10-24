@@ -21,7 +21,7 @@ does not warm caches; OpenCode V2 has built-in warming.
    opencode --version
    ```
    If the command is missing, stop and report that opencode is not on `PATH`.
-   Supported versions are V1 1.18.29+ and V2 2.1.4+. Confirm `bun --version` too if the user wants the
+   Supported versions are V1 1.18.0+ and V2 2.1.4+. Confirm `bun --version` too if the user wants the
    reporting CLI.
 
 2. **Find this directory.** `cd` to the directory containing this `INSTALL.md`
@@ -41,6 +41,10 @@ does not warm caches; OpenCode V2 has built-in warming.
    path to edit by hand. It also removes the obsolete V1 `plugins/ember.ts`.
    On V1 it instead installs `plugins/ember.ts` and supporting modules in
    `<config>/ember/`, without changing JSON config.
+   Existing legacy server registries retain their format and tuple options.
+   V2 config updates use staged atomic replacements and retain originals in the
+   printed `.ember-install-*` directory; a failed second replacement rolls back
+   the first. If interrupted, use those originals to recover the prior configs.
 
    It also links `gain.ts` as `~/.local/bin/ember` (override with `EMBER_BIN_DIR`).
    Keep this checkout in place and put the chosen bin directory on `PATH`.
@@ -72,8 +76,8 @@ does not warm caches; OpenCode V2 has built-in warming.
   sending a model prompt; report the error verbatim.
 - If the config directory is not where opencode reports it, rerun step 3 with the
   directory from `opencode debug paths` as the argument.
-- Back up local changes to an installed copy before rerunning; `install.sh` does
-  not create backups.
+- Back up local changes to installed plugin source before rerunning. Config
+  originals are retained in the installer recovery directory; source copies are not.
 
 ## Report format
 

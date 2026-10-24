@@ -1,6 +1,7 @@
 import { Plugin } from "@opencode/plugin"
 import {
   BIG_TOKENS,
+  GUARD_SAVE_ERROR,
   card,
   guardText,
   isCold,
@@ -20,7 +21,7 @@ type ModelInfo = { id: string; modelID: string; providerID: string; cost: readon
 export default Plugin.define({
   id: "ember",
   async setup(ctx) {
-    const guard = { mode: readStore().guard as GuardMode }
+    const guard = { mode: readStore().guard as GuardMode, unsaved: false }
     const sessions = new Map<string, Session>()
     const helperSessions = new Set<string>()
     const hydrating = new Map<string, Promise<void>>()
@@ -109,7 +110,7 @@ export default Plugin.define({
     await ctx.session.hook("context", async (e) => {
       if (e.messages[e.messages.length - 1]?.role !== "user") return
       if (await isHelper(e.sessionID)) return
-      guard.mode = readStore().guard
+      if (!guard.unsaved) guard.mode = readStore().guard
       const s = state(e.sessionID)
       await hydrate(s)
       s.lastModel = { providerID: e.model.providerID, modelID: e.model.id }
@@ -135,27 +136,34 @@ export default Plugin.define({
           const parts = prompt.text.trim().split(/\s+/)
           const sub = parts[0]?.toLowerCase()
           let message: string
+          let variant: Notice["variant"] = "info"
           if (sub === "guard") {
             const mode = parts[1]?.toLowerCase()
             if (mode === "warn" || mode === "refuse" || mode === "block") {
-              guard.mode = mode === "block" ? "refuse" : mode
-              writeStore((fresh) => {
-                fresh.guard = guard.mode
-              })
-              message = `ember guard ${guard.mode}`
+              const requested = mode === "block" ? "refuse" : mode
+              const saved = writeStore((fresh) => { fresh.guard = requested })
+              guard.mode = saved ? requested : "refuse"
+              guard.unsaved = !saved
+              message = saved ? `ember guard ${guard.mode}` : GUARD_SAVE_ERROR
+              if (!saved) variant = "error"
             } else {
               message = "usage: /ember guard warn|refuse"
             }
           } else if (sub === "gain" || sub === "discover") {
             message = "ember gain moved to a terminal binary — run `ember gain` in a shell"
           } else {
+            if (guard.unsaved) {
+              await notice(sessionID, GUARD_SAVE_ERROR, "error", 30_000)
+              throw new Error(GUARD_SAVE_ERROR)
+            }
             guard.mode = readStore().guard
             const helper = await isHelper(sessionID)
             const s = state(sessionID)
             if (!helper) await hydrate(s)
             message = card(s, await priceFor(s), guard.mode, Date.now())
           }
-          await notice(sessionID, message, "info", 30_000)
+          await notice(sessionID, message, variant, 30_000)
+          if (variant === "error") throw new Error(message)
         },
       })
     })

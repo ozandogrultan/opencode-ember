@@ -1,11 +1,12 @@
 import type { Plugin } from "@opencode-ai/plugin"
-import { BIG_TOKENS, card, guardText, isCold, newSession, priceOf, type Session as CoreSession } from "./core.ts"
+import { BIG_TOKENS, GUARD_SAVE_ERROR, card, guardText, isCold, newSession, priceOf, type Session as CoreSession } from "./core.ts"
 import { cleanDay, readStore, writeStore, type Day } from "./store.ts"
 
 type Session = CoreSession & { hydrating: boolean; blocked: string | null }
 
 export const EmberPlugin: Plugin = async ({ client }) => {
   const store = readStore()
+  let guardSaveFailed = false
   const sessions = new Map<string, Session>()
   const helperSessions = new Set<string>()
 
@@ -15,7 +16,7 @@ export const EmberPlugin: Plugin = async ({ client }) => {
     return s
   }
 
-  const refreshSettings = () => { store.guard = readStore().guard }
+  const refreshSettings = () => { if (!guardSaveFailed) store.guard = readStore().guard }
   const recordHistory = (apply: (day: Day) => void) => {
     const key = new Date().toISOString().slice(0, 10)
     writeStore((fresh) => {
@@ -25,7 +26,7 @@ export const EmberPlugin: Plugin = async ({ client }) => {
     })
   }
 
-  const toast = async (message: string, variant: "info" | "warning" = "info", duration = 20_000) => {
+  const toast = async (message: string, variant: "info" | "warning" | "error" = "info", duration = 20_000) => {
     await client.tui.showToast({ body: { title: "ember", message, variant, duration } }).catch(() => undefined)
   }
 
@@ -72,23 +73,28 @@ export const EmberPlugin: Plugin = async ({ client }) => {
     "command.execute.before": async (input, output) => {
       if (input.command !== "ember") return
       let message: string
+      let variant: "info" | "error" = "info"
       const parts = (input.arguments ?? "").trim().split(/\s+/)
       const sub = parts[0]?.toLowerCase()
       if (sub === "guard") {
         const mode = parts[1]?.toLowerCase()
         if (mode === "warn" || mode === "refuse" || mode === "block") {
-          store.guard = mode === "block" ? "refuse" : mode
-          writeStore((fresh) => { fresh.guard = store.guard })
-          message = `ember guard ${store.guard}`
+          const requested = mode === "block" ? "refuse" : mode
+          const saved = writeStore((fresh) => { fresh.guard = requested })
+          store.guard = saved ? requested : "refuse"
+          guardSaveFailed = !saved
+          message = saved ? `ember guard ${store.guard}` : GUARD_SAVE_ERROR
+          if (!saved) variant = "error"
         } else {
           message = "usage: /ember guard warn|refuse"
         }
       } else if (sub === "gain" || sub === "discover") {
         message = "ember gain moved to a terminal binary — run `ember gain` in a shell"
       } else {
-        message = card(state(input.sessionID), priceOf(state(input.sessionID).lastModel), store.guard, Date.now())
+        message = guardSaveFailed ? GUARD_SAVE_ERROR : card(state(input.sessionID), priceOf(state(input.sessionID).lastModel), store.guard, Date.now())
+        if (guardSaveFailed) variant = "error"
       }
-      await toast(message, "info", 30_000)
+      await toast(message, variant, 30_000)
       output.parts = []
       // V1 has no handled-command result; throwing prevents prompt creation.
       throw new Error(message.replace(/\n/g, " · "))

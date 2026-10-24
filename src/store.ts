@@ -73,7 +73,7 @@ function withLock<T>(filePath: string, fn: () => T): T {
   }
 }
 
-export function writeStore(apply?: (store: Store) => void): void {
+export function writeStore(apply?: (store: Store) => void): boolean {
   try {
     const file = stateFilePath()
     mkdirSync(dirname(file), { recursive: true })
@@ -88,7 +88,8 @@ export function writeStore(apply?: (store: Store) => void): void {
       writeFileSync(tmp, JSON.stringify(fresh, null, 2))
       renameSync(tmp, file)
     })
+    return true
   } catch {
-    // a failed write only drops a history entry, never the conversation
+    return false
   }
 }

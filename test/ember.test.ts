@@ -38,6 +38,34 @@ describe("opencode-ember", () => {
   const today = () => new Date().toISOString().slice(0, 10)
   const stored = () => JSON.parse(readFileSync(stateFile, "utf8"))
 
+  for (const mode of ["refuse", "warn"] as const) {
+    it(`reports a failed ${mode} save and stays fail-closed until a successful retry`, async () => {
+      writeFileSync(stateFile, JSON.stringify({ version: 3, guard: mode === "refuse" ? "warn" : "refuse", days: {} }))
+      const h = await start({ context: history(10) })
+      const blocked = `${stateFile}.${process.pid}.tmp`
+      mkdirSync(blocked)
+      await expect(h.command("s", `guard ${mode}`)).rejects.toThrow("could not save guard settings")
+      expect(h.notices.at(-1)?.variant).toBe("error")
+      expect(h.notices.at(-1)?.message).not.toBe(`ember guard ${mode}`)
+      await expect(h.command("s", "")).rejects.toThrow("could not save guard settings")
+      expect(h.notices.at(-1)?.message).not.toContain("cold rewrite")
+      await expect(h.send("s")).rejects.toThrow("Prompt blocked by ember guard refuse")
+      expect(stored().guard).toBe(mode === "refuse" ? "warn" : "refuse")
+      rmSync(blocked, { recursive: true })
+      await h.command("s", "guard warn")
+      await expect(h.send("s")).resolves.toBeUndefined()
+      expect(stored().guard).toBe("warn")
+    })
+  }
+
+  it("does not fail a normal conversation when history cannot be saved", async () => {
+    const h = await start({ context: history(10) })
+    mkdirSync(`${stateFile}.${process.pid}.tmp`)
+    await expect(h.send("s")).resolves.toBeUndefined()
+    await expect(h.stepEnded("s", 1000)).resolves.toBeUndefined()
+    expect(existsSync(stateFile)).toBe(false)
+  })
+
   it("defaults guard to warn and sends a cold cache with a notice", async () => {
     const h = await start({ context: history(10, 55000) })
     await expect(h.send("s")).resolves.toBeUndefined()
@@ -338,7 +366,7 @@ describe("opencode-ember", () => {
     const now = Date.now()
     const clock = spyOn(Date, "now").mockReturnValueOnce(now).mockReturnValueOnce(now).mockReturnValue(now + 6000)
     try {
-      await h.command("timeout", "guard refuse")
+      await expect(h.command("timeout", "guard refuse")).rejects.toThrow("could not save guard settings")
       expect(readFileSync(stateFile, "utf8")).toBe(before)
       expect(existsSync(lock)).toBe(true)
     } finally {

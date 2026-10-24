@@ -74,11 +74,33 @@ mkdir -p "$cfg"
         process.exit(1)
       }
     }
-    const plugins = config.plugins ?? config.plugin ?? []
-    const spec = (item) => (item && typeof item === "object" && !Array.isArray(item) ? item.package : item)
-    if (!plugins.some((item) => spec(item) === entry)) config.plugins = [...plugins, entry]
-    return { file, config }
+    const registry = file.endsWith("opencode.json") && !("plugins" in config) && "plugin" in config ? "plugin" : "plugins"
+    const plugins = config[registry] ?? []
+    const spec = (item) => Array.isArray(item) ? item[0] : item && typeof item === "object" ? item.package : item
+    const registered = [...(config.plugins ?? []), ...(config.plugin ?? [])].some((item) => spec(item) === entry)
+    if (!registered) config[registry] = [...plugins, entry]
+    return { file, config, existed: fs.existsSync(file) }
   })
+
+  const staging = fs.mkdtempSync(path.join(cfg, ".ember-install-"))
+  try {
+    for (const plan of plans) {
+      const name = path.basename(plan.file)
+      plan.backup = path.join(staging, `${name}.original`)
+      plan.next = path.join(staging, `${name}.next`)
+      if (plan.existed) fs.copyFileSync(plan.file, plan.backup, fs.constants.COPYFILE_EXCL)
+      const fd = fs.openSync(plan.next, "wx", plan.existed ? fs.statSync(plan.file).mode : 0o600)
+      try {
+        fs.writeFileSync(fd, JSON.stringify(plan.config, null, 2) + "\n")
+        fs.fsyncSync(fd)
+      } finally {
+        fs.closeSync(fd)
+      }
+    }
+  } catch (error) {
+    console.error(`Could not stage config updates; live configs unchanged. Recovery files: ${staging}`)
+    throw error
+  }
 
   const dest = path.join(cfg, "plugins", "ember")
   const owned = fs.readdirSync(source).filter((name) => name.endsWith(".ts"))
@@ -93,10 +115,26 @@ mkdir -p "$cfg"
   )
   console.log(`installed -> ${dest}`)
 
-  for (const { file, config } of plans) {
-    fs.writeFileSync(file, JSON.stringify(config, null, 2) + "\n")
-    console.log(`registered ${entry} in ${file}`)
+  const replaced = []
+  try {
+    for (const plan of plans) {
+      fs.renameSync(plan.next, plan.file)
+      replaced.push(plan)
+    }
+  } catch (error) {
+    for (const plan of replaced.reverse()) {
+      try {
+        if (plan.existed) fs.renameSync(plan.backup, plan.file)
+        else fs.rmSync(plan.file)
+      } catch (rollbackError) {
+        console.error(`Could not restore ${plan.file}: ${rollbackError.message}`)
+      }
+    }
+    console.error(`Config update failed; recovery files: ${staging}`)
+    throw error
   }
+  for (const { file } of plans) console.log(`registered ${entry} in ${file}`)
+  console.log(`config originals -> ${staging}`)
 ' "$src" "$cfg" "$entry"
 
 # OpenCode V1 loaded ember.ts straight from plugins/; V2 rejects that file.
