@@ -15,18 +15,18 @@ the cache TTL has lapsed on a large context, ember shows the price or blocks
 the send, and `ember gain` reports the cold writes you paid for across sessions.
 
 A port of [`cache-tax`](https://github.com/karanb192/claude-code-mods/tree/main/plugins/cache-tax)
-to [opencode](https://opencode.ai). One self-contained plugin file, no runtime
-dependencies.
+to [opencode](https://opencode.ai) V1 and V2. A server plugin plus an optional V2 TUI companion,
+no runtime dependencies.
 
-**Install:** clone the repo, run `./install.sh`, and restart opencode
-([details](#install)).
+**Install:** clone the repo and run `./install.sh` ([details](#install)).
 
 ## What it does
 
 - **`/ember guard warn` (default) shows the price and sends anyway.** When the TTL has
-  lapsed and the context is large, a graceful warning is shown while the message sends.
-  `/ember guard refuse` hard blocks cold sends and shows an informative error in the turn,
-  preventing accidental rewrites until you switch to `warn` or `/clear`.
+  lapsed and the context is large, a warning toast is shown while the message sends.
+  `/ember guard refuse` hard blocks cold sends before the provider call and shows the
+  price as the session error, preventing accidental rewrites until you switch to `warn`
+  or start a new session.
 - **`/ember` keeps score.** Warm or cold, context size, cold-rewrite price,
   guard mode, and this session's cold writes.
 - **`ember gain` reports history.** After a cold-send warning, a completed step
@@ -42,12 +42,14 @@ dependencies.
 
 ## Requirements
 
-- [opencode](https://opencode.ai) with the server-plugin API
-  (`@opencode-ai/plugin`). [package.json](package.json) records the supported
-  opencode range (`engines`) and the plugin version used for development.
-  OpenCode V2 compatibility is not verified.
-- A provider with prefix caching and reported token usage. Built-in estimates
-  cover selected Anthropic, OpenAI, and Gemini model families.
+- [opencode](https://opencode.ai) **V1 1.18.0+ or V2 2.1.4+** (see
+  `engines.opencode` in [package.json](package.json)). Both use the same package.
+- A provider with prefix caching and reported token usage. Prices come from the
+  rates OpenCode reports for the model when it has a cache-write price, otherwise
+  from a built-in table for selected Anthropic, OpenAI, and Gemini families.
+- The TUI (and on V2 its ember companion), for the warning and `/ember` toasts. Without it (for example
+  `opencode run`) the guard still blocks and records, but nothing is shown for
+  `warn` and `/ember`.
 - [Bun](https://bun.sh) on `PATH` to run the reporting CLI.
 
 ## Install
@@ -57,36 +59,51 @@ dependencies.
 ```sh
 git clone https://github.com/ozandogrultan/opencode-ember.git
 cd opencode-ember
-./install.sh
+./install.sh [config-dir]
 ```
 
-Then **restart opencode** — plugins are loaded at startup only.
+On V1, restart opencode. V2 reloads watched config on change.
 
-`install.sh` also links the report binary as `~/.local/bin/ember` (set
-`EMBER_BIN_DIR` to choose another directory), so `ember gain` works from any
-shell if that directory is on `PATH`. The link points to this checkout's
-`gain.ts`, so keep the checkout in place. An alternative is
-`npm install -g opencode-ember` for the CLI; this does not load the plugin into opencode.
-`/ember gain` inside opencode tells you to use the binary instead.
+`install.sh` copies `src/` into `<config>/plugins/ember/` (the config directory
+comes from `opencode debug paths`, or pass one), then merges `"./plugins/ember"`
+into the `plugins` array of `opencode.json` (server) and `cli.json` (terminal,
+also active when connected to a remote server). Existing entries are kept, a
+config it cannot parse as plain JSON is left untouched, and the V1
+`plugins/ember.ts` is removed when upgrading to V2.
+On V1 it installs `plugins/ember.ts` for auto-discovery with its supporting
+modules in `<config>/ember/`; existing config files are not modified.
+An existing legacy server `plugin` registry stays in that format, including tuple
+options. Config updates are staged and atomically replaced; originals remain in
+the printed `.ember-install-*` recovery directory. A failed second replacement
+rolls back the first.
 
-`install.sh` asks opencode for its own config directory (`opencode debug paths`)
-and copies `ember.ts` into `<config>/plugins/`, overwriting any existing file.
-
-### Manually
-
-Copy `ember.ts` to one of:
-
-- `~/.config/opencode/plugins/ember.ts` — all projects (global)
-- `<project>/.opencode/plugins/ember.ts` — one project
+It also links the report binary as `~/.local/bin/ember` (set `EMBER_BIN_DIR` to
+choose another directory), so `ember gain` works from any shell if that
+directory is on `PATH`. The link points to this checkout's `gain.ts`, so keep the
+checkout in place. An alternative is `npm install -g opencode-ember` for the CLI;
+this does not load the plugin into opencode. `/ember gain` inside opencode tells
+you to use the binary instead.
 
 ### From npm
 
 ```json
-{ "plugin": ["opencode-ember"] }
+{ "plugins": ["opencode-ember"] }
 ```
 
-in `opencode.json`, then restart opencode. Install the CLI
-separately with `npm install -g opencode-ember` if you want `ember gain`.
+in V2 `opencode.json` (or `opencode plugin add opencode-ember`). Add the same
+`plugins` entry to `cli.json` for warning and card toasts, including remote-server sessions.
+V1 keeps its singular config unchanged: `{ "plugin": ["opencode-ember"] }`;
+restart V1 after installation. The package exports the V2 TUI companion as `./tui`.
+Install the CLI separately with `npm install -g opencode-ember` if you want
+`ember gain`.
+
+### Manually
+
+On V2, copy the files in `src/` to `<config>/plugins/ember/`, add a `package.json` with
+`"exports": { ".": "./index.ts", "./tui": "./tui.ts" }`, and add
+`"./plugins/ember"` to `plugins` in `opencode.json` and `cli.json`.
+On V1, use `install.sh` so the single-file auto-discovered entry and its shared
+imports are installed together.
 
 ## Usage
 
@@ -102,11 +119,13 @@ ember gain | discover [--json]     # the report, from any shell
 | `/ember guard refuse` | hard block cold sends |
 | `ember gain` | terminal report over collected history (alias `ember discover`) |
 
-Slash commands show their result in a toast and abort before any model call.
-The command result may also appear as an error in the turn. `guard block` is an
-alias for `guard refuse`.
+`/ember` shows its result in a toast and never calls a model or adds a message to
+the session. `guard block` is an alias for `guard refuse`.
 
 Guard mode is persisted globally and shared across sessions and processes.
+If saving fails, ember reports an error and refuses cold sends in the current
+process until a guard command saves successfully. Other processes and restarts
+may still use the previous saved setting.
 
 ## Cache TTL
 
@@ -125,11 +144,12 @@ cache tier or change the price table.
 
 ## Prices and the reporting caveats (read this too)
 
-Dollar figures come from a small built-in table in `ember.ts` (`PRICES`: cache
-read, cache write and output rates per model family). Two consequences:
+Dollar figures use the cache rates OpenCode reports for the model, or, when it
+reports no cache-write price, a small built-in table in `src/core.ts` (`PRICES`:
+cache read, cache write and output rates per model family). Two consequences:
 
-- **Every figure is an estimate.** Prices are hard-coded list rates for the
-  Anthropic/OpenAI/Gemini families the plugin knows; they do not follow your provider,
+- **Every figure is an estimate.** The built-in table holds list rates for the
+  Anthropic/OpenAI/Gemini families the plugin knows; it does not follow your provider,
   plan, negotiated rates, or prompt-fee changes. The card estimates a cold rewrite
   using the whole context and the write rate, and a warm turn using the read rate.
   Recorded cold-write costs use reported cache-write tokens and the write rate;
@@ -138,7 +158,7 @@ read, cache write and output rates per model family). Two consequences:
 - **Unpriced models read $0.00.** Models without a matching row — e.g. custom
   OpenAI-compatible ids like `custom-unpriced-model` or provider relays — report no cost, so
   the cold-write cost runs understated (or reads $0.00) for them. Cold-write
-  counts are independent of pricing. Add a row to `PRICES` in `ember.ts` to include a model in the estimates.
+  counts are independent of pricing. Add a row to `PRICES` in `src/core.ts` to include a model in the estimates.
 
 State lives in a versioned file, `~/.local/share/opencode/ember.json` by default.
 Multiple opencode processes (one per workspace/cmux session) share the
@@ -153,11 +173,8 @@ credentials, request headers, or prompts are written to disk.
 
 ## Testing
 
-Free command checks (no model call; shown with default settings):
-
-```sh
-opencode debug config | grep -A2 '"ember"'   # loaded?
-```
+Free command checks (no model call; shown with default settings). If `/ember` is
+unknown, the plugin did not load:
 
 ```
 /ember               # card
@@ -180,9 +197,15 @@ Repository checks are listed in [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## How it works
 
-`config` (registers the `/ember` command), `chat.message` + `chat.params`
-(cold-send guard), `event` (token/price tracking from `step-finish`, session cleanup),
-and `command.execute.before` (handles `/ember`, aborted before any model call).
+The V2 server plugin registers a `context` hook (runs before each agent model call; only
+the call that answers a new prompt is guarded, so tool-loop steps pass), the
+`/ember` command, and an event loop (`session.step.ended` for token tracking and
+cold-write recording; compaction, revert and delete resets). It never appends to
+a session. Warnings and the card reach the screen through an `ember` RPC `notice`
+event that the TUI companion shows as a toast; refusing throws from the hook, which
+OpenCode reports as the session error. Subagent sessions are ignored.
+V1 retains its `chat.message` / `chat.params` guard and token-usage event hooks,
+with the same shared pricing, guard calculations and version-3 state store.
 
 ## Credits
 

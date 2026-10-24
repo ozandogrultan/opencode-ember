@@ -7,10 +7,18 @@ updates:
     open-pull-requests-limit: 5
     cooldown:
       default-days: 3
+    ignore:
+      # @opentui/solid pins an exact solid-js peer, so it can only move in
+      # lockstep with OpenTUI (bump it in the opentui group instead).
+      - dependency-name: solid-js
     groups:
+      opentui:
+        patterns:
+          - "@opentui/*"
       opencode:
         patterns:
           - "@opencode-ai/*"
+          - "@opencode/*"
       npm-minor-patch:
         update-types:
           - minor

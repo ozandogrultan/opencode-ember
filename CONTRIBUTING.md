@@ -11,10 +11,18 @@ cd opencode-ember
 bun install
 ```
 
-There is no build step. `ember.ts` is the whole plugin, `gain.ts` is the
-`ember gain` reporting CLI, `test/` holds the bun tests, and
-`scripts/changelog.sh` owns the release bookkeeping. `opencode` loads the TS
-source directly.
+There is no build step. `ember.ts` is the dual V1/V2 entry; `src/` holds the V1
+and V2 wiring, TUI companion and shared core/store. `gain.ts` is the reporting
+CLI, `test/` holds the bun tests, and `scripts/changelog.sh` owns the release
+bookkeeping. OpenCode loads the TS source directly.
+
+`python3 tests/smoke.py --v1 /path/to/v1/opencode` checks both installed hosts
+against a local mock provider, including terminal toasts. `--v2` selects the V2
+binary. Config, state and caches use a temporary directory printed by the test;
+the smoke test never calls a real provider.
+Use `--install` to verify the local installer instead of the npm entry, and
+`--legacy-registry` to exercise legacy tuple registrations on V2. Unrelated
+plugin initialization order and options are compared against a pre-install baseline.
 
 ## Before you open a PR
 
