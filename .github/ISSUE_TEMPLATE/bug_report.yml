@@ -21,7 +21,7 @@ body:
       description: The exact commands or keystrokes that trigger it.
       placeholder: |
         1. Start opencode with ember loaded
-        2. Run `/keepwarm 1h`
+        2. Run `/ember guard refuse`
         3. ...
     validations:
       required: true
@@ -38,9 +38,7 @@ body:
     attributes:
       label: Which surface?
       options:
-        - Warmth never starts, or stops early
         - Cold guard misprices or does not block
-        - "`/keepwarm` command"
         - "`/ember` card or `ember gain` report"
         - "Installer (`install.sh`)"
         - Other

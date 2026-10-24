@@ -5,9 +5,8 @@ body:
   - type: markdown
     attributes:
       value: |
-        Before filing, please read [AGENTS.md](https://github.com/ozandogrultan/opencode-ember/blob/main/AGENTS.md)
-        and [Safe warming status](https://github.com/ozandogrultan/opencode-ember/blob/main/README.md#safe-warming-status).
-        Background warming must not mutate sessions or provider configuration.
+        Before filing, please read [AGENTS.md](https://github.com/ozandogrultan/opencode-ember/blob/main/AGENTS.md).
+        ember starts no timers or background requests and must not mutate sessions or provider configuration.
   - type: textarea
     id: problem
     attributes:

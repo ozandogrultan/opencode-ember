@@ -11,8 +11,8 @@ the price arithmetic and safety rules are the original author's.
 
 ## Layout
 
-- `ember.ts` — the whole plugin: hooks, shared state store, pricing table,
-  timers, `/keepwarm` and `/ember` commands.
+- `ember.ts` — the whole plugin: hooks, shared state store, pricing table
+  and the `/ember` command.
 - `gain.ts` — the `ember gain` / `ember discover` CLI over the state file
   (a standalone `bin`, no runtime deps).
 - `INSTALL.md` — step-by-step install and verification for an agent.
@@ -34,20 +34,18 @@ bun run gain        # run the reporting CLI
 
 ## Hard-won rules — do not regress
 
-- **Background warming is unavailable, fail-closed, and never mutates sessions or provider config.**
-  Never fork, prompt, delete, or append to a session for background warming.
-  Never mutate `config.provider` or wrap provider `options.fetch` (which clobbers
-  authentication plugins and breaks provider initialization). Background warming
-  fails closed with "no supported captured model request is available" and never
-  issues background provider requests.
+- **No timers, heartbeats, or background requests, and never mutate sessions or provider config.**
+  Never fork, prompt, delete, or append to a session. Never mutate
+  `config.provider` or wrap provider `options.fetch` (which clobbers
+  authentication plugins and breaks provider initialization). Cache warming
+  belongs to OpenCode V2, not this plugin.
 - **Shared, versioned state.** Every write re-reads and merges
-  `~/.local/share/opencode/ember.json` so sessions armed by other opencode
-  processes are preserved. Automatic arming is disabled by default; unstamped
-  defaults must not be implicitly enabled. Explicit commands and recorded cold
-  writes can arm timers, but no timer sends a warming request.
+  `~/.local/share/opencode/ember.json` so other opencode processes' history is
+  preserved. Unknown top-level and per-day fields (including the `always`,
+  `sessions` and heartbeat fields of older versions) must pass through writes
+  untouched and are never acted on.
 - **Prices are estimates.** They are hard-coded list rates; unpriced models must
-  read `$0.00` while raw counters (heartbeats, tokens, cold writes) stay
-  accurate.
+  read `$0.00` while cold-write counts stay accurate.
 
 ## Verifying
 

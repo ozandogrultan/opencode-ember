@@ -8,12 +8,11 @@ configuration.
 
 `ember` is a server-side opencode plugin: `ember.ts` is the whole plugin, `gain.ts`
 is the reporting CLI (requires Bun on PATH), and `install.sh` installs both.
-It registers two slash commands (`/keepwarm`, `/ember`). Its only import from
+It registers one slash command (`/ember`). Its only import from
 `@opencode-ai/plugin` is a **type-only** import, which is erased at runtime, so
 it needs nothing installed and no package manager for the plugin itself. The
 supported opencode range is `engines` in `package.json`; see the README for
-compatibility notes. Background warming is unavailable: the keepwarm timer
-stops without sending provider requests.
+compatibility notes. It does not warm caches; OpenCode V2 has built-in warming.
 
 ## Steps
 
@@ -49,9 +48,9 @@ stops without sending provider requests.
 4. **Verify the plugin loads.** This starts opencode's config pipeline, which
    loads plugins, so errors surface here:
    ```sh
-   opencode debug config | grep -A2 -E '"keepwarm"|"ember"'
+   opencode debug config | grep -A2 '"ember"'
    ```
-   Expected: command entries for `keepwarm` and `ember`. If Bun is available,
+   Expected: a command entry for `ember`. If Bun is available,
    check the CLI with `~/.local/bin/ember gain` (use the chosen bin directory
    if overridden); an empty-history report is valid.
 
@@ -63,16 +62,14 @@ stops without sending provider requests.
 
 ## After install (tell the user, do not run these for them)
 
-- After restarting, `/keepwarm status` and `/ember` confirm the commands exist.
-  Both are free — they do not call a model.
-- The guard assumes a 5-minute TTL by default. `/keepwarm 6h ttl 1h` changes
-  the assumption for that session, not the provider's cache tier.
-- `/keepwarm` only arms a timer. Its callback stops with
-  `no supported captured model request is available`; it does not warm the cache.
+- After restarting, `/ember` confirms the command exists. It is free — it does
+  not call a model.
+- The guard assumes a 5-minute TTL by default. `EMBER_TTL_SECONDS` changes the
+  assumption, not the provider's cache tier.
 
 ## Failure handling
 
-- If step 4 shows no `keepwarm`/`ember`, the plugin did not load. Re-run with
+- If step 4 shows no `ember`, the plugin did not load. Re-run with
   logs: `opencode debug config --print-logs --log-level DEBUG 2>&1 | grep -i plugin`.
   Report the error verbatim.
 - If the file exists but not where opencode reports its config, redo step 3 with
@@ -85,7 +82,7 @@ stops without sending provider requests.
 ```
 Installed : <absolute path of ember.ts>
 Load check: PASS | FAIL (<error>)
-Commands  : keepwarm, ember present | missing
+Command   : ember present | missing
 CLI       : <absolute path of ember link>; verified | skipped (<reason>)
 Restart   : required — user must quit and restart opencode
 Notes     : <anything unexpected>
