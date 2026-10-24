@@ -44,7 +44,9 @@ does not warm caches; OpenCode V2 has built-in warming.
    Existing legacy server registries retain their format and tuple options.
    V2 config updates use staged atomic replacements and retain originals in the
    printed `.ember-install-*` directory; a failed second replacement rolls back
-   the first. If interrupted, use those originals to recover the prior configs.
+    the first. If interrupted, use those originals to recover the prior configs.
+    Symlinked V2 config files are left untouched; register the plugin manually
+    in their targets instead.
 
    It also links `gain.ts` as `~/.local/bin/ember` (override with `EMBER_BIN_DIR`).
    Keep this checkout in place and put the chosen bin directory on `PATH`.

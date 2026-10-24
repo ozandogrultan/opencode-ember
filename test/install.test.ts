@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test"
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs"
+import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, readlinkSync, rmSync, symlinkSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 
@@ -76,6 +76,31 @@ describe("install.sh", () => {
     expect(existsSync(join(cfg, "opencode.json"))).toBe(false)
     expect(existsSync(join(cfg, "plugins"))).toBe(false)
   })
+
+  for (const file of ["opencode.json", "cli.json"]) {
+    for (const dangling of [false, true]) {
+      it(`rejects ${dangling ? "dangling " : ""}symlinked ${file} before mutation`, async () => {
+        const target = join(dir, "managed.json")
+        const original = '{ "plugins": ["auth-plugin"] }\n'
+        if (!dangling) writeFileSync(target, original)
+        const other = file === "cli.json" ? "opencode.json" : "cli.json"
+        writeFileSync(join(cfg, other), original)
+        symlinkSync(target, join(cfg, file))
+
+        const { code, err } = await run()
+
+        expect(code).toBe(1)
+        expect(err).toContain("symlinked config")
+        expect(lstatSync(join(cfg, file)).isSymbolicLink()).toBe(true)
+        expect(readlinkSync(join(cfg, file))).toBe(target)
+        if (!dangling) expect(readFileSync(target, "utf8")).toBe(original)
+        else expect(existsSync(target)).toBe(false)
+        expect(readFileSync(join(cfg, other), "utf8")).toBe(original)
+        expect(readdirSync(cfg).sort()).toEqual(["cli.json", "opencode.json"])
+        expect(existsSync(bin)).toBe(false)
+      })
+    }
+  }
 
   it("removes the obsolete V1 plugin file", async () => {
     mkdirSync(join(cfg, "plugins"))

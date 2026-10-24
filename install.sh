@@ -62,6 +62,10 @@ mkdir -p "$cfg"
   ]
 
   const plans = targets.map(([file, schema]) => {
+    if (fs.lstatSync(file, { throwIfNoEntry: false })?.isSymbolicLink()) {
+      console.error(`Cannot safely replace symlinked config ${file}; no files were changed. Register "${entry}" manually in its target.`)
+      process.exit(1)
+    }
     let config = { $schema: schema }
     if (fs.existsSync(file)) {
       try {
