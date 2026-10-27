@@ -42,7 +42,7 @@ no runtime dependencies.
 
 ## Requirements
 
-- [opencode](https://opencode.ai) **V1 1.18.0+ or V2 2.1.4+** (see
+- [opencode](https://opencode.ai) **V1 1.18.0+ or V2 2.2.0+** (see
   `engines.opencode` in [package.json](package.json)). Both use the same package.
 - A provider with prefix caching and reported token usage. Prices come from the
   rates OpenCode reports for the model when it has a cache-write price, otherwise
